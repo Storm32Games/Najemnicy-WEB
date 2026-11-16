@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Launcher (npm run package)
+release
+tools/launcher/web
