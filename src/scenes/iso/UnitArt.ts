@@ -256,35 +256,38 @@ export interface UnitSheet {
  * Składa arkusz 'f_idle0' ... 'b_heal3' z klatek 24x32 rysowanych osobno (przycięte do klatki, obrys per klatka).
  * Klatki idą w blokach po SHEET_COLS: w każdym bloku wiersz przodem, potem tyłem. `post` maluje po obrysie
  * (kałuże, iskry, dym - bez czarnej obwódki). `anims` = które animacje malować (bestie: tylko BASE_ANIMS).
+ * `density` > 1: klatki 24x32 projektowych malowane w gęstszej siatce (np. 2 = 48x64 px, bestie HD).
  */
 export function buildUnitSheet(
   draw: (pc: PixelCanvas, front: boolean, pose: Pose) => void,
   post?: (pc: PixelCanvas, front: boolean, pose: Pose) => void,
   anims: readonly AnimName[] = ANIM_ORDER,
+  density = 1,
 ): UnitSheet {
   const names = framesOf(anims);
   const cols = Math.min(SHEET_COLS, names.length);
   const blocks = Math.ceil(names.length / cols);
-  const pc = new PixelCanvas(UNIT_FW * cols, UNIT_FH * 2 * blocks);
+  const FW = UNIT_FW * density, FH = UNIT_FH * density;
+  const pc = new PixelCanvas(FW * cols, FH * 2 * blocks);
   const frames: UnitSheet['frames'] = [];
-  const at = (i: number, row: number) => ({ x: (i % cols) * UNIT_FW, y: (Math.floor(i / cols) * 2 + row) * UNIT_FH });
+  const at = (i: number, row: number) => ({ x: (i % cols) * FW, y: (Math.floor(i / cols) * 2 + row) * FH });
   (['f', 'b'] as const).forEach((facing, row) => {
     names.forEach((name, i) => {
       const pose = POSES[name];
-      const fpc = new PixelCanvas(UNIT_FW, UNIT_FH);
+      const fpc = new PixelCanvas(FW, FH);
       draw(fpc, facing === 'f', pose);
       fpc.outline(0.32, 0x0e080c);
       post?.(fpc, facing === 'f', pose);
       const { x, y } = at(i, row);
-      for (let yy = 0; yy < UNIT_FH; yy++) pc.data.set(fpc.data.subarray(yy * UNIT_FW * 4, (yy + 1) * UNIT_FW * 4), ((y + yy) * pc.w + x) * 4);
-      frames.push({ name: `${facing}_${name}`, x, y, w: UNIT_FW, h: UNIT_FH });
+      for (let yy = 0; yy < FH; yy++) pc.data.set(fpc.data.subarray(yy * FW * 4, (yy + 1) * FW * 4), ((y + yy) * pc.w + x) * 4);
+      frames.push({ name: `${facing}_${name}`, x, y, w: FW, h: FH });
     });
     for (const [alias, src] of Object.entries(FRAME_ALIASES)) {
       const { x, y } = at(names.indexOf(src), row);
-      frames.push({ name: `${facing}_${alias}`, x, y, w: UNIT_FW, h: UNIT_FH });
+      frames.push({ name: `${facing}_${alias}`, x, y, w: FW, h: FH });
     }
   });
-  return { pc, frames };
+  return density === 1 ? { pc, frames } : { pc, frames, density };
 }
 
 // ================================================================== pomocnicze

@@ -16,6 +16,7 @@ import { ENEMIES } from '../core/data/enemies';
 import type { EnemyShape } from '../core/data/types';
 import { paintCreatureSheet } from './iso/CreatureArt';
 import { ArtBook } from './iso/IsoArt';
+import { addHiRes } from './iso/HiRes';
 import { type Box, MAP_H, MAP_W, beaconPos, paintRegion, regionFires, regionOccluders, scrX, scrXf, scrY, scrYf } from './iso/RegionArt';
 import { addUnit, unitLookOf } from './iso/UnitLooks';
 import { dirOfVector, type SpriteDir } from './iso/SpriteUnits';
@@ -850,7 +851,10 @@ export class TravelScene extends Phaser.Scene {
     const skin = BEAST_SKINS[Math.floor(Math.random() * BEAST_SKINS.length)], eye = BEAST_EYES[Math.floor(Math.random() * BEAST_EYES.length)];
     const name = `fauna_${i}_${Date.now() % 100000}`, tex = `unit_${name}`;
     const sh = paintCreatureSheet(shape, parseColor(skin, 0x8a6a4a), parseColor(eye, 0xff3a2a), templateId);
-    new ArtBook(this).sheet(tex, sh.pc, sh.frames);
+    const d = sh.density ?? 1;
+    // gatunki HD (iso/CreatureHD): płótno 2x gęstsze - ramki i rozmiar projektowy / d
+    if (d !== 1) addHiRes(this, tex, sh.pc, { w: sh.pc.w / d, h: sh.pc.h / d, smooth: false }, sh.frames.map((f) => ({ name: f.name, x: f.x / d, y: f.y / d, w: f.w / d, h: f.h / d })));
+    else new ArtBook(this).sheet(tex, sh.pc, sh.frames);
     this.anims.create({ key: `${name}_idle`, frames: ['f_idle0', 'f_idle1'].map((frame) => ({ key: tex, frame })), frameRate: 1.6, repeat: -1 });
     this.anims.create({ key: `${name}_walk`, frames: [0, 1, 2, 3].map((k) => ({ key: tex, frame: `f_walk${k}` })), frameRate: 11, repeat: -1 });
     const sp = this.add.sprite(x, y, tex, 'f_idle0').setOrigin(0.5, 0.85).setScale(0.42 * Math.min(1.4, def?.look.scale ?? 1) * (0.8 + Math.random() * 0.4)).setDepth(7);
