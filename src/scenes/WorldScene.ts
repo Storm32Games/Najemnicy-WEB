@@ -3494,6 +3494,7 @@ export class WorldScene extends Phaser.Scene {
     const a = this.units.get(att), d = this.units.get(def);
     if (!a || !d) return;
     const col = info.ok ? LASER_OK : info.reason === 'brak linii strzału' ? LASER_NO_LOS : LASER_FAR;
+    this.aimFace(a, def);
     const x0 = a.sprite.x, y0 = a.sprite.y - 13;
     const x1 = d.sprite.x, y1 = d.sprite.y - 12;
     g.lineStyle(1.5, col, 0.22).lineBetween(x0, y0, x1, y1);
@@ -3506,6 +3507,15 @@ export class WorldScene extends Phaser.Scene {
     const len = Math.hypot(x1 - x0, y1 - y0) || 1;
     const side = x1 - x0 >= 0 ? 1 : -1;
     this.costLabel?.setPosition(Math.round((x0 + x1) / 2 + (side * (y1 - y0) * 8) / len), Math.round((y0 + y1) / 2 - (side * (x1 - x0) * 8) / len));
+  }
+
+  /** Celująca postać obraca się w stronę celu (tylko w spoczynku - nie przerywa chodu ani animacji akcji). */
+  private aimFace(u: Unit, def: Actor): void {
+    const cur = u.sprite.anims.currentAnim?.key ?? '';
+    if (u.actor.state !== 'up' || (u.sprite.anims.isPlaying && !/_(idle|crouch|prone)$/.test(cur))) return;
+    const { facing, left } = u;
+    this.face(u, { gx: def.gx - u.actor.gx, gy: def.gy - u.actor.gy });
+    if (u.facing !== facing || u.left !== left) this.idle(u);
   }
 
   /** Opis wroga pod kursorem: PW, KP, szansa trafienia z flankowaniem / osłoną / PWA (Combat.strikeInfo). */
