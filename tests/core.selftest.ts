@@ -798,5 +798,85 @@ function simulateMission(contract: Contract, party: Character[], seed: number): 
   ok(st3.food <= 4 && st3.day === 2, 'rest day eats supplies');
 }
 
+// ---------------- wraki pojazdów: rozbieranie na złom, hałas, wybuch baku
+{
+  const st = freshState();
+  st.party = [createCharacter({ name: 'Złomiarz', classId: 'scavenger', ancestry: 'human' }), createCharacter({ name: 'Kruk', classId: 'soldier', ancestry: 'human' })];
+  const foes = Object.keys(ENEMIES).slice(0, 2) as EnemyId[];
+  let tried = 0, wrecksSeen = 0, success = 0, partsBurnt = 0, noiseOk = true, scrapOk = true;
+  for (let k = 0; k < 40; k++) {
+    const c = { id: `wreck-${k}`, type: 'eliminate', level: 2, biome: 'ruins', enemies: foes, reward: 0 } as unknown as Contract;
+    for (const ch of st.party) ch.hp = ch.maxHp; // rany z poprzednich prób
+    const m = new Mission(c, st.party, makeRng(300 + k));
+    const props = m.map.props.filter((p) => p.type === 'car' || p.type === 'bus');
+    const wr = m.things.filter((t) => t.kind === 'wreck');
+    if (wr.length !== props.length) ok(false, `wrecks: one per car/bus prop (${k})`);
+    if (wr.some((w) => w.burnt !== (props.find((p) => p.gx === w.gx && p.gy === w.gy)!.seed % 10 < 3))) ok(false, 'wrecks: burnt flag shared with art');
+    wrecksSeen += wr.length;
+    const w = wr[0];
+    if (!w) continue;
+    const pc = m.pcs[0];
+    const adj = m.interactCell(pc, w);
+    if (!adj) continue;
+    pc.gx = adj.gx;
+    pc.gy = adj.gy;
+    const before = m.scrap, hp = pc.ch.hp;
+    let sig: { scrap: number; items: unknown[]; hurt: number; noise: number; roll: { degree: number } } | null = null;
+    m.on((s) => { if (s.kind === 'salvage') sig = s; });
+    const alertedBefore = m.groups.map((g) => g.alerted);
+    ok(m.interact(pc, w), 'wreck: salvage works next to wreck');
+    tried++;
+    const s = sig as unknown as { scrap: number; items: unknown[]; hurt: number; noise: number; roll: { degree: number } };
+    ok(!!s && w.done, 'wreck: salvage signal, wreck used up');
+    if (!s) continue;
+    ok(!m.interact(pc, w), 'wreck: can be salvaged only once');
+    if (m.scrap - before !== s.scrap) scrapOk = false;
+    if (s.roll.degree === 0 && (s.scrap !== 0 || pc.ch.hp !== hp - s.hurt)) scrapOk = false;
+    if (s.roll.degree >= 2) success++;
+    if (w.burnt && s.items.length) partsBurnt++;
+    // hałas: każda nieświadoma grupa z kimś w promieniu zostaje zaalarmowana
+    m.groups.forEach((g, i) => {
+      const near = g.actors.some((e) => e.state !== 'dead' && Math.max(Math.abs(e.gx - pc.gx), Math.abs(e.gy - pc.gy)) <= s.noise);
+      if (!alertedBefore[i] && near && !g.alerted) noiseOk = false;
+    });
+  }
+  ok(wrecksSeen > 0 && tried > 10, `wrecks: ruins maps have salvageable wrecks (${wrecksSeen}, tried ${tried})`);
+  ok(success > 0, 'wreck: some salvages succeed');
+  ok(scrapOk, 'wreck: scrap added / crit failure hurts and gives nothing');
+  ok(partsBurnt === 0, 'wreck: burnt wrecks give no parts');
+  ok(noiseOk, 'wreck: salvage noise alerts groups in radius');
+
+  // wybuch baku: ogień w promieniu 1, wrak spalony; spalone nie wybuchają; zapis / odczyt stanu
+  const c = { id: 'wreck-blast', type: 'eliminate', level: 2, biome: 'ruins', enemies: foes, reward: 0 } as unknown as Contract;
+  let m: InstanceType<typeof Mission> | null = null;
+  for (let k = 0; k < 30 && !m; k++) {
+    const t = new Mission({ ...c, id: `wreck-blast-${k}` }, st.party, makeRng(500 + k));
+    if (t.things.some((x) => x.kind === 'wreck' && !x.burnt) && t.things.some((x) => x.kind === 'wreck' && x.burnt)) m = t;
+  }
+  ok(!!m, 'wreck blast: map with burnt and intact wrecks');
+  if (m) {
+    const live = m.things.find((x) => x.kind === 'wreck' && !x.burnt)!;
+    const pc = m.pcs[0];
+    const adj = m.interactCell(pc, live) ?? { gx: live.gx, gy: live.gy + 1 };
+    pc.gx = adj.gx;
+    pc.gy = adj.gy;
+    const hp = pc.ch.hp;
+    let blast = false;
+    m.on((s) => { if (s.kind === 'wreckBlast' && s.thing === live) blast = s.hits.some((h) => h.actor === pc && h.dmg > 0); });
+    m.explodeWreck(live);
+    ok(live.exploded && live.burnt && live.done && blast && pc.ch.hp < hp, 'wreck blast: fire damage nearby, wreck burnt out');
+    const dead = m.things.find((x) => x.kind === 'wreck' && x.burnt && !x.exploded)!;
+    for (let i = 0; i < 50; i++) m.igniteWrecks(dead, 0);
+    ok(!dead.exploded, 'wreck blast: burnt wrecks never explode');
+    const snap = JSON.parse(JSON.stringify(m.snapshot()));
+    const m2 = new Mission(m.contract, st.party, makeRng(1), snap);
+    const r2 = m2.things.find((x) => x.kind === 'wreck' && x.gx === live.gx && x.gy === live.gy);
+    ok(!!r2?.exploded && r2.done, 'wreck: state survives save/restore');
+    snap.things = snap.things.filter((x: { kind: string }) => x.kind !== 'wreck');
+    const m3 = new Mission(m.contract, st.party, makeRng(1), snap);
+    ok(m3.things.filter((x) => x.kind === 'wreck').length === m.things.filter((x) => x.kind === 'wreck').length, 'wreck: old saves get wrecks re-added');
+  }
+}
+
 console.log(`\n${checks} checks, ${fails} failures`);
 process.exit(fails ? 1 : 0);

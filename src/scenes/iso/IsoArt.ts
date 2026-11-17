@@ -477,7 +477,13 @@ function beam(pen: IsoPen, u0: number, v0: number, z0: number, u1: number, v1: n
   pen.pc.line(x0, y0 - 1, x1, y1 - 1, r[3]);
 }
 
-export function paintProp(type: PropType, rot: number, seed: number, biome: Biome): { pc: PixelCanvas; ax: number; ay: number } {
+/** Stan wraku z misji: spalony / wysadzony, rozebrany na złom (bez kół, drzwi i maski). */
+export interface WreckLook {
+  burnt?: boolean;
+  stripped?: boolean;
+}
+
+export function paintProp(type: PropType, rot: number, seed: number, biome: Biome, look: WreckLook = {}): { pc: PixelCanvas; ax: number; ay: number } {
   const R = rng(seed * 31 + 7);
   const alongU = rot % 2 === 0;
   return propCanvas((pen) => {
@@ -487,17 +493,22 @@ export function paintProp(type: PropType, rot: number, seed: number, biome: Biom
         // wrak samochodu po latach w pustkowiu: wyblakły lakier pod kurzem i rdzą, martwe (wybite) światła,
         // wybite szyby, przebite / zdjęte koła (puste nadkola), brakujące drzwi i maska, wgnieciony dach,
         // przestrzeliny, plama oleju i części rozwleczone obok; warianty: spalony, przód albo tył do widza
-        const burnt = R() < 0.3;
+        const burntR = R() < 0.3;
+        const burnt = look.burnt ?? burntR;
+        const stripped = !!look.stripped;
         const paint = CAR_COLS[(R() * CAR_COLS.length) | 0];
         const dust = biome === 'wastes' ? 0xb49a6c : 0x8a8274;
         const body = burnt ? ramp(0x3a2a20, 6, 0.3) : ramp(mix(mix(paint, 0x6a6458, 0.3), dust, 0.1), 6, 0.45);
         const frontNear = R() < 0.55; // widoczny koniec (+oś) to przód
-        const hood: 'shut' | 'open' | 'gone' = burnt ? 'gone' : frontNear ? (R() < 0.3 ? 'open' : R() < 0.5 ? 'gone' : 'shut') : 'shut';
+        const hoodR: 'shut' | 'open' | 'gone' = burnt ? 'gone' : frontNear ? (R() < 0.3 ? 'open' : R() < 0.5 ? 'gone' : 'shut') : 'shut';
         // koła (bliższa strona): całe, flak, goła felga, brak (puste nadkole)
+        const hood = stripped ? 'gone' : hoodR;
         type Wheel = 'tire' | 'flat' | 'rim' | 'none';
         const wheel = (): Wheel => { const q = R(); return burnt ? (q < 0.5 ? 'rim' : 'none') : q < 0.2 ? 'tire' : q < 0.55 ? 'flat' : q < 0.8 ? 'rim' : 'none'; };
-        const W: Wheel[] = [wheel(), wheel()];
-        const doorGone = !burnt && R() < 0.35; // przednie drzwi od strony widza
+        const wheels: Wheel[] = [wheel(), wheel()];
+        const W: Wheel[] = stripped ? ['none', 'none'] : wheels; // rozebrany: koła zdjęte
+        const doorR = R() < 0.35;
+        const doorGone = (!burnt && doorR) || stripped; // przednie drzwi od strony widza
         const roofCaved = R() < 0.35;
         const shot = R() < 0.4; // podziurawiony kulami
         const A0 = 0.03, A1 = 0.97, B0 = 0.27, B1 = 0.73;
@@ -646,17 +657,17 @@ export function paintProp(type: PropType, rot: number, seed: number, biome: Biom
           if (W[i] === 'tire') box(a, a + 0.18, B1 - 0.05, B1 + 0.03, 0, 5, tire);
           else if (W[i] === 'flat') box(a - 0.02, a + 0.2, B1 - 0.05, B1 + 0.03, 0, 3, tire);
           else if (W[i] === 'rim') box(a + 0.03, a + 0.15, B1 - 0.05, B1 + 0.02, 0, 3, rim);
-          else if (!burnt && R() < 0.6) box(a + 0.04, a + 0.14, B1 - 0.08, B1 - 0.01, 0, 2, CONCRETE); // pustak zamiast koła
+          else if ((!burnt && R() < 0.6) || stripped) box(a + 0.04, a + 0.14, B1 - 0.08, B1 - 0.01, 0, 2, CONCRETE); // pustak zamiast koła
         });
         // części rozwleczone obok wraku (po stronie widza)
         const parts: (() => void)[] = [];
-        if (W.some((w) => w === 'none' || w === 'rim') && R() < 0.7) {
+        if (W.some((w) => w === 'none' || w === 'rim') && R() < 0.7 && !stripped) {
           const a = 0.15 + R() * 0.6, b = 0.86 + R() * 0.04;
           parts.push(() => { // zdjęta opona leżąca płasko: czarny krążek z dziurą
             pen.flat(...at(a, b), ...at(a + 0.16, b + 0.1), 0, (x, y, u, v) => { const [p, q] = alongU ? [u, v] : [v, u]; const d = Math.hypot((p - a - 0.08) / 0.08, (q - b - 0.05) / 0.05); return d > 1 ? -1 : d < 0.4 ? -1 : d < 0.6 ? 0x4a4640 : pick(tire, 0.3 + (1 - d) * 0.4, x, y); });
           });
         }
-        if (doorGone) {
+        if (doorGone && !stripped) {
           const a = 0.2 + R() * 0.45;
           parts.push(() => box(a, a + 0.26, 0.82, 0.93, 0, 1, body)); // odpadnięte drzwi
         }
@@ -673,11 +684,16 @@ export function paintProp(type: PropType, rot: number, seed: number, biome: Biom
         break;
       }
       case 'bus': {
-        const body = ramp(R() < 0.6 ? 0xb8902a : 0x6a7a5a, 6, 0.48);
+        const col = R() < 0.6 ? 0xb8902a : 0x6a7a5a;
+        const body = look.burnt ? ramp(0x3a2a20, 6, 0.3) : ramp(mix(col, 0x6a6458, 0.25), 6, 0.48);
         alongU ? castShadow(pen, 0, 0.18, 1, 0.84, 0.5) : castShadow(pen, 0.18, 0, 0.84, 1, 0.5);
         box(0.0, 1.0, 0.18, 0.82, 2, 12, body, (_f, x, y) => (vnoise(x / 4, y / 4, seed) > 0.68 ? -0.4 : 0));
         box(0.0, 1.0, 0.18, 0.82, 12, 21, body, (f, _x, _y, s, z) => (f > 0 && z > 13 && z < 19 && Math.floor(s) % 5 !== 0 ? -2.2 : 0));
-        box(0.02, 0.98, 0.2, 0.8, 21, 23, RUST);
+        if (look.stripped) {
+          // rozebrany: zdarty dach (widać wypatroszone wnętrze), blacha z boków zabrana
+          const [a0, b0, a1, b1] = alongU ? [0.05, 0.22, 0.95, 0.78] : [0.22, 0.05, 0.78, 0.95];
+          pen.flat(a0, b0, a1, b1, 21, (x, y) => (hash2(x, y, seed) < 0.2 ? RUST[1] : ((x + y) & 3) === 0 ? 0x2a2420 : 0x14100e));
+        } else box(0.02, 0.98, 0.2, 0.8, 21, 23, look.burnt ? ramp(0x5a3424, 5, 0.35) : RUST);
         break;
       }
       case 'barrel':

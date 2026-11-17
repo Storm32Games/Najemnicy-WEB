@@ -137,7 +137,11 @@ export interface Battlefield {
   inSight?: (a: Actor) => boolean;
   /** Eksploracja: najemnicy mogą używać zdolności i przedmiotów poza walką (bez kosztu akcji). */
   freeActions?: () => boolean;
+  /** Wybuch / ogień w polu `cell` (granat, koktajl, rakiety) - misja sprawdza, czy zapalił wraki. Przed syncAll / checkEnd. */
+  onBlast?: (cell: GridPos, radius: number) => void;
 }
+/** Zdolności "wybuchowe", które nie zapalają paliwa (EMP, wstrząs). */
+const NO_IGNITE: ReadonlySet<string> = new Set(['emp_grenade', 'quake']);
 
 /** Na kogo działa zdolność obszarowa. Dystansowe obszary (granaty) trafiają wszystkich - także swoich. */
 const AREA_ALLIES: ReadonlySet<AbilityId> = new Set<AbilityId>(['rally', 'field_clinic', 'chief_rally', 'kostucha_command']);
@@ -589,6 +593,7 @@ export class Combat {
     const result = resolveAbility(id, { user: a.ch, targets: tg.map((x) => x.ch), rng: this.rng, mapIndex: Math.min(2, a.mapN), cell });
     if (result.attack) a.mapN += result.attacks || 1;
     this.emit({ kind: 'ability', actor: a, ability: ab, targets: tg, cell, result });
+    if (ab.fx === 'explosion' && !NO_IGNITE.has(ab.id)) this.field.onBlast?.(cell ?? { gx: a.gx, gy: a.gy }, ab.radius || 1);
     if (ab.fx === 'shot') this.noise(a, 9);
     else if (ab.fx === 'explosion') this.noise(a, 10);
     this.logAll(result.log);
@@ -627,6 +632,7 @@ export class Combat {
     this.spendActions(a, c.actions);
     const result = useConsumable(a.ch, inst, targets.map((x) => x.ch), this.rng);
     this.emit({ kind: 'item', actor: a, item: inst, targets, cell, result });
+    if (c.target === 'area' && c.effect === 'damage' && cell && c.dmgType !== 'elec') this.field.onBlast?.(cell, c.radius || 1);
     if (c.effect === 'damage') this.noise(a, 10);
     this.logAll(result.log, 'amber');
     this.syncAll();

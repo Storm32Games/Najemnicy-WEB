@@ -16,7 +16,7 @@ import {
 import type { Character, GridPos, ItemInstance } from '../rules/types.ts';
 import { Combat, makeActor, type Actor, type ActorState, type CombatEnd, type EnemyGroup, type LogTone, type Side } from './combat.ts';
 import { CellKind, cheb, dist, TacticalGrid, UNREACHABLE } from './grid.ts';
-import { generateMap, inEntryZone, type Biome, type FindKind, type FindSpawn, type TacticalMap } from './mapgen.ts';
+import { generateMap, inEntryZone, WRECK_TYPES, wreckBurnt, type Biome, type FindKind, type FindSpawn, type TacticalMap } from './mapgen.ts';
 
 export type ObjectiveType = 'eliminate' | 'retrieve' | 'rescue' | 'hunt' | 'boss' | 'hack' | 'liberate' | 'purge' | 'defend' | 'forage';
 /** Cele, po których trzeba wrócić do strefy ewakuacji (przedmiot, jeniec, dane z serwera, zapasy żywności). */
@@ -38,7 +38,8 @@ export interface MissionContract {
 
 /** door = zamknięte drzwi (wytrych / wyważenie), device = urządzenie elektroniczne (hakowanie). */
 /** nest = gniazdo zmutowanej fauny (zlecenie oczyszczenia). */
-export type ThingKind = 'crate' | 'item' | 'captive' | 'door' | 'device' | 'nest';
+/** wreck = wrak samochodu / autobusu do rozebrania na złom (może wybuchnąć). */
+export type ThingKind = 'crate' | 'item' | 'captive' | 'door' | 'device' | 'nest' | 'wreck';
 export interface MissionThing extends GridPos {
   kind: ThingKind;
   name: string;
@@ -54,6 +55,10 @@ export interface MissionThing extends GridPos {
   device?: DeviceKind;
   /** Obiekt jest celem zlecenia (serwer, osadnik, gniazdo). */
   objective?: boolean;
+  /** Wrak: autobus (więcej złomu, trudniej), spalony (mało złomu, bez części, nie wybucha), wysadzony. */
+  bus?: boolean;
+  burnt?: boolean;
+  exploded?: boolean;
 }
 export interface MissionFind extends FindSpawn {
   found: boolean;
@@ -128,6 +133,10 @@ export type MissionSignal =
   | { kind: 'spotted'; group: EnemyGroup; by: Actor; close: boolean }
   | { kind: 'crate'; thing: MissionThing; by: Actor; roll: CheckResult; scrap: number; items: ItemInstance[]; trapDamage: number }
   | { kind: 'interact'; thing: MissionThing; by: Actor }
+  /** Rozbieranie wraku: test Majsterkowania, złom / części, rana od blachy (kryt. porażka), hałas w promieniu `noise`. */
+  | { kind: 'salvage'; thing: MissionThing; by: Actor; roll: CheckResult; scrap: number; items: ItemInstance[]; hurt: number; noise: number }
+  /** Wybuch baku wraku (od granatu / ognia / innego wraku); `hits` = obrażenia od ognia w promieniu 1. */
+  | { kind: 'wreckBlast'; thing: MissionThing; hits: { actor: Actor; dmg: number }[] }
   /** Próba otwarcia drzwi wytrychem / wyważenia albo hakowania urządzenia. */
   | { kind: 'lock'; thing: MissionThing; by: Actor; attempt: LockAttempt; hack: boolean }
   | { kind: 'objective'; lines: ObjectiveLine[] }
@@ -137,6 +146,12 @@ export type MissionSignal =
   | { kind: 'finish'; result: MissionResult };
 
 export const CRATE_SKILLS: readonly SkillId[] = ['thievery', 'crafting', 'athletics'];
+/** Akcje potrzebne do rozebrania wraku w walce (cała tura). */
+export const SALVAGE_ACTIONS = 3;
+/** Szansa, że wybuch / ogień w zasięgu zapali bak niespalonego wraku. */
+export const WRECK_BLAST_CHANCE = 0.3;
+/** Części, które da się wymontować z wraku. */
+const WRECK_PARTS: readonly ItemId[] = ['battery', 'circuit', 'radio_part', 'scrap_metal'];
 const FIND_LOOT: Readonly<Record<FindKind, readonly (ItemId | '@any')[]>> = {
   scrap: [], cache: ['@any'], medical: ['bandage', 'stimpak', 'medkit'], tech: ['circuit', 'battery', 'memory_card', 'radio_part', 'vacuum_tube'],
   food: ['canned_food'], ammo: ['ammo_box'],
@@ -214,6 +229,7 @@ export class Mission {
         isBlocked: (gx, gy) => this.neutral.some((n) => n.gx === gx && n.gy === gy),
         inSight: (a) => this.isVisible(a),
         freeActions: () => this.mode === 'explore',
+        onBlast: (cell, radius) => this.igniteWrecks(cell, radius),
       },
       rng,
     );
@@ -264,6 +280,7 @@ export class Mission {
       target.isTarget = true;
     }
     for (const c of this.map.crates) this.things.push({ kind: 'crate', gx: c.gx, gy: c.gy, done: false, name: 'Skrzynia' });
+    this.addWrecks();
     const oc = this.map.objCell;
     if (oc && this.objType === 'retrieve') {
       const itemId = contract.objective?.itemId ?? 'scrap_metal';
@@ -400,6 +417,7 @@ export class Mission {
       if (a) th.actor = a;
       this.things.push(th);
     }
+    if (!this.things.some((t) => t.kind === 'wreck')) this.addWrecks(); // zapis sprzed rozbierania wraków
     const thing = (i: number): MissionThing | null => (i >= 0 ? this.things[i] ?? null : null);
     this.itemThing = thing(s.itemThing);
     this.captive = thing(s.captive);
@@ -868,8 +886,8 @@ export class Mission {
     // Oldgame combat.js:450: akcja schodzi tylko, gdy interakcja się udała.
     if ((th.kind === 'crate' || th.kind === 'door' || th.kind === 'device') && !skill) return false;
     if ((th.kind === 'door' || th.kind === 'device') && th.lock?.jammed) return false;
-    // PF2e: Otwieranie zamka i hakowanie = 2 akcje (wyważenie 1), reszta interakcji 1
-    const cost = (th.kind === 'door' && skill !== 'athletics') || th.kind === 'device' ? 2 : 1;
+    // PF2e: Otwieranie zamka i hakowanie = 2 akcje (wyważenie 1), rozbieranie wraku cała tura, reszta interakcji 1
+    const cost = th.kind === 'wreck' ? SALVAGE_ACTIONS : (th.kind === 'door' && skill !== 'athletics') || th.kind === 'device' ? 2 : 1;
     if (this.mode === 'combat' && !this.combat.spendActions(a, cost)) return false;
     if (th.kind === 'item' && th.objective) {
       // zapasy żywności idą do spichrza Przystani (nagroda zlecenia), nie do plecaka
@@ -921,6 +939,7 @@ export class Mission {
       this.emitObjectives();
       return true;
     }
+    if (th.kind === 'wreck') return this.salvage(a, th);
     if (th.kind === 'door' && skill) return this.openLock(a, th, skill);
     if (th.kind === 'device' && skill) return this.hack(a, th, skill);
     return skill ? this.openCrate(a, th, skill) : false;
@@ -1012,6 +1031,114 @@ export class Mission {
       }
     }
     return best;
+  }
+
+  // ---------- wraki pojazdów
+  /** Wraki z rekwizytów mapy (samochody, autobusy) jako obiekty do rozebrania. */
+  private addWrecks(): void {
+    for (const p of this.map.props) {
+      if (!WRECK_TYPES.has(p.type)) continue;
+      const bus = p.type === 'bus';
+      this.things.push({ kind: 'wreck', gx: p.gx, gy: p.gy, done: false, name: bus ? 'Wrak autobusu' : 'Wrak samochodu', bus, burnt: wreckBurnt(p) });
+    }
+  }
+
+  /** KT rozbierania wraku: poziom misji, autobus +2 (gruba blacha, zapieczone śruby). */
+  wreckDC(th: MissionThing): number {
+    return dcForLevel(this.level) + (th.bus ? 2 : 0);
+  }
+
+  /** Premia Szperacza do rozbierania wraków. */
+  static salvageBonus(ch: Character): number {
+    return ch.classId === 'scavenger' ? 1 : 0;
+  }
+
+  /**
+   * Rozbieranie wraku na złom: Majsterkowanie (+1 Szperacz) vs KT wraku; jednorazowe.
+   * Kryt. porażka: rana od blachy 1k4, nic; porażka: garść złomu; sukces: złom i szansa na część; kryt.: x1.5 i część.
+   * Spalony wrak: 60% złomu, bez części. Autobus: x1.8. Zgrzyt metalu niesie się (promień 5 / 8 / 12) - grupy w zasięgu ruszają.
+   */
+  salvage(a: Actor, th: MissionThing): boolean {
+    if (th.kind !== 'wreck' || th.done) return false;
+    th.done = true;
+    const dc = this.wreckDC(th);
+    const bonus = Mission.salvageBonus(a.ch);
+    const r = checkBy(a.ch, getStat(a.ch, 'crafting') + bonus, dc, this.rng);
+    const DEG = ['KRYTYCZNA PORAŻKA', 'porażka', 'sukces', 'KRYTYCZNY SUKCES'];
+    this.log(`${a.ch.name} rozbiera ${th.name.toLowerCase()}: ${SKILLS.crafting?.name ?? 'Majsterkowanie'} ${r.total} vs KT ${dc} — ${DEG[r.degree]}`, r.degree >= 2 ? 'good' : 'bad');
+    const mult = (1 + this.level * 0.4) * (th.bus ? 1.8 : 1) * (th.burnt ? 0.6 : 1);
+    let scrap = 0;
+    let hurt = 0;
+    const items: ItemInstance[] = [];
+    if (r.degree === 0) {
+      hurt = roll('1d4', this.rng).total;
+      applyDamage(a.ch, hurt, 'S');
+      this.log(`Ostra blacha się obsuwa — ${a.ch.name} traci ${hurt} PW. Z wraku nic nie będzie.`, 'bad');
+      this.combat.syncAll();
+    } else if (r.degree === 1) {
+      scrap = Math.max(1, Math.round((1 + this.rng() * 2) * mult));
+      this.log(`Udaje się oderwać tylko trochę blachy: ${scrap} Złomu.`, 'dim');
+    } else {
+      scrap = Math.round((4 + this.rng() * 5) * mult * (r.degree === 3 ? 1.5 : 1)) + (bonus ? 2 : 0);
+      this.log(`Wrak rozebrany: ${scrap} Złomu.`, 'amber');
+      const parts = WRECK_PARTS.filter((id) => !!itemDef(id));
+      if (!th.burnt && parts.length && (r.degree === 3 || this.rng() < 0.35)) {
+        const id = parts[Math.floor(this.rng() * parts.length)];
+        const inst = newItem(id);
+        this.loot.push(inst);
+        items.push(inst);
+        this.log(`Wymontowano: ${itemDef(id)?.name ?? id}.`, 'good');
+      }
+    }
+    this.scrap += scrap;
+    const noise = r.degree === 0 ? 12 : r.degree === 1 ? 8 : 5;
+    this.emit({ kind: 'salvage', thing: th, by: a, roll: r, scrap, items, hurt, noise });
+    this.makeNoise(a, noise);
+    this.emitObjectives();
+    return true;
+  }
+
+  /** Hałas poza walką (rozbieranie wraku): nieświadome grupy z kimś w promieniu ruszają na drużynę; w walce - Combat.noise. */
+  private makeNoise(a: Actor, radius: number): void {
+    if (this.mode === 'combat') {
+      this.combat.noise(a, radius);
+      return;
+    }
+    if (this.mode !== 'explore') return;
+    const woke = this.groups.filter((g) => !g.alerted && g.actors.some((e) => e.state !== 'dead' && cheb(e, a) <= radius));
+    if (!woke.length) return;
+    for (const g of woke) g.alerted = true;
+    this.log('Zgrzyt metalu niesie się po okolicy — wrogowie ruszają w tę stronę!', 'bad');
+    this.checkSpotting();
+  }
+
+  /** Wybuch / ogień w polu `cell`: niespalone wraki w zasięgu mogą zapalić się i wybuchnąć (reakcja łańcuchowa do 3 wraków w głąb). */
+  igniteWrecks(cell: GridPos, radius: number, depth = 0): void {
+    for (const th of this.things) {
+      if (th.kind !== 'wreck' || th.burnt || th.exploded) continue;
+      if (Math.hypot(th.gx - cell.gx, th.gy - cell.gy) > radius + 0.45) continue;
+      if (this.rng() >= WRECK_BLAST_CHANCE) continue;
+      this.explodeWreck(th, depth);
+    }
+  }
+
+  /** Wybuch baku: ogień 2k6 na wszystkich w promieniu 1, wrak zostaje spalony (bez złomu do odzysku). */
+  explodeWreck(th: MissionThing, depth = 0): void {
+    if (th.kind !== 'wreck' || th.exploded) return;
+    th.exploded = true;
+    th.burnt = true;
+    th.done = true;
+    this.log(`${th.name} staje w ogniu i wybucha!`, 'bad');
+    const hits: { actor: Actor; dmg: number }[] = [];
+    for (const x of this.actors) {
+      if (x.state === 'dead' || cheb(x, th) > 1) continue;
+      const out = applyDamage(x.ch, roll('2d6', this.rng).total, 'fire');
+      hits.push({ actor: x, dmg: out.dealt });
+      this.log(`${x.ch.name}: ${out.dealt} obrażeń od ognia.`, x.side === 'pc' ? 'bad' : 'amber');
+    }
+    this.emit({ kind: 'wreckBlast', thing: th, hits });
+    this.combat.syncAll();
+    if (depth < 2) this.igniteWrecks(th, 1.5, depth + 1);
   }
 
   /** ST zamka skrzyni. */

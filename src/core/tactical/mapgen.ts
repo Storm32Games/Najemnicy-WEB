@@ -26,6 +26,10 @@ export const PROP_KIND: Readonly<Partial<Record<PropType, CellKind>>> = {
   car: 1, bus: 2, barrel: 1, barrel_toxic: 1, crate: 1, debris: 1, sandbags: 1, container: 2, fence: 1, generator: 2, pillar: 2,
   terminal: 1, tent: 2, tank_trap: 1, scrap_pile: 1, wall: 2, wall_broken: 1,
 };
+/** Wraki pojazdów: można je rozebrać na złom, a niespalone mogą wybuchnąć od ognia / eksplozji. */
+export const WRECK_TYPES: ReadonlySet<PropType> = new Set<PropType>(['car', 'bus']);
+/** Wrak spalony (pusty bak, stopione części) - wspólne dla grafiki i logiki misji, stałe dla danego rekwizytu. */
+export const wreckBurnt = (p: Pick<MapProp, 'seed'>): boolean => p.seed % 10 < 3;
 /** Dekoracje: nie blokują niczego. */
 const DECOR: ReadonlySet<PropType> = new Set<PropType>(['lamp', 'sign', 'antenna', 'tree_dead', 'skeleton', 'campfire']);
 
