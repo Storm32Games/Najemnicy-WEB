@@ -606,6 +606,27 @@ export const CONSUMABLES = {
       buffs: [{ id: 'stimmed', value: 4 }, { id: 'tuned', value: 4 }],
     },
   },
+  // warsztat Przystani (campaign/tech.ts, data/recipes.ts)
+  dynamite_charge: {
+    id: 'dynamite_charge',
+    name: 'Ładunek dynamitu',
+    desc: '3k6 obrażeń kłutych w promieniu 2 (Refleks WT 17). Głośny. Z warsztatu.',
+    type: 'consumable',
+    price: 70,
+    level: 1,
+    icon: 'grenade',
+    consumable: { actions: 1, target: 'area', range: 5, effect: 'damage', amount: '3d6', dmgType: 'P', save: 'reflex', dc: 17, radius: 2 },
+  },
+  time_bomb: {
+    id: 'time_bomb',
+    name: 'Bomba zegarowa',
+    desc: '5k6 obrażeń kłutych w promieniu 2 (Refleks WT 20). Ciężka: 2 akcje, rzut na 3 pola. Tylko ze schematu warsztatu.',
+    type: 'consumable',
+    price: 140,
+    level: 2,
+    icon: 'grenade',
+    consumable: { actions: 2, target: 'area', range: 3, effect: 'damage', amount: '5d6', dmgType: 'P', save: 'reflex', dc: 20, radius: 2 },
+  },
 } as const satisfies Readonly<Record<ConsumableId, ConsumableItem>>;
 
 /** Loot to sell (junk / tech / ammo). */
@@ -640,11 +661,20 @@ export const JUNK = {
   old_watch: {
     id: 'old_watch',
     name: 'Stary zegarek',
-    desc: 'Nadal tyka. Zadziwiające.',
+    desc: 'Nadal tyka. Zadziwiające. Mechanizm przyda się w warsztacie.',
     type: 'junk',
     price: 15,
     level: 0,
     icon: 'watch',
+  },
+  dynamite: {
+    id: 'dynamite',
+    name: 'Laska dynamitu',
+    desc: 'Pocena, ale jeszcze nie wilgotna. Sama nie wybuchnie - warsztat zrobi z niej ładunek.',
+    type: 'junk',
+    price: 20,
+    level: 1,
+    icon: 'dynamite',
   },
   trophy_teeth: {
     id: 'trophy_teeth',

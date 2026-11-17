@@ -7,6 +7,8 @@ import { FOOD_LOW, foodLow, foodOf, foodStatus } from '../core/campaign/food';
 import { BIOME_NAMES, FACTION_NAMES, MOOD_NAMES, TYPE_NAMES, difficulty, refreshBoard, storyHint } from '../core/campaign/contracts';
 import { buy, buyPrice, healAtClinic, healCost, nomadDiscount, restDay, sell, sellPrice, shopStock } from '../core/campaign/economy';
 import { campaign, hireCost, hireRecruit, recruitCharacter, tavernRecruits } from '../core/campaign/session';
+import { bestTechnician, craft, craftCost, nextLevel, partCount, partUses, recipeState, research, researchBlock, researchDC, showHint, storePart, techOf, upgradeWorkshop } from '../core/campaign/tech';
+import { BRANCH_NAMES, RECIPES, WORKSHOP_LEVELS, type RecipeDef } from '../core/data/recipes';
 import { type Contract, MAX_PARTY, campaignPartyLevel } from '../core/campaign/state';
 import { generateName, plainName, shortName } from '../core/data/names';
 import { RECRUITS } from '../core/data/recruits';
@@ -25,8 +27,8 @@ import { Save, ScrollList, enterLoaded, Tip, type Tone, abilityIconImage, bar, d
 // Przystań (port Oldgame/src/scenes/hub.js): tablica zleceń, handlarz, lecznica, drużyna, karczma, zapis.
 // Diorama 3D zastąpiona malowanym tłem; okna DOM - panelami Phasera.
 
-type Tab = 'board' | 'shop' | 'heal' | 'party' | 'tavern';
-const TITLES: Record<Tab, string> = { board: 'Tablica zleceń', shop: 'Handlarz Nomadów', heal: 'Lecznica', party: 'Drużyna', tavern: 'Karczma' };
+type Tab = 'board' | 'shop' | 'workshop' | 'heal' | 'party' | 'tavern';
+const TITLES: Record<Tab, string> = { board: 'Tablica zleceń', shop: 'Handlarz Nomadów', workshop: 'Warsztat', heal: 'Lecznica', party: 'Drużyna', tavern: 'Karczma' };
 const TONE = { good: PAL.good, amber: PAL.amber, bad: PAL.bad } as const;
 const SLOTS: [EquipSlot, string][] = [['weapon', 'Broń główna'], ['weapon2', 'Broń zapasowa'], ['armor', 'Pancerz'], ['shield', 'Tarcza']];
 const OBJECTIVE: Record<string, string> = {
@@ -56,6 +58,8 @@ export class HubScene extends Phaser.Scene {
   private bgT = 0;
   private tab: Tab = 'board';
   private sel: string | null = null;
+  /** Wybrana receptura w warsztacie. */
+  private selRecipe: string | null = null;
   private charIdx = 0;
   private top!: Phaser.GameObjects.Container;
   private menu!: Phaser.GameObjects.Container;
@@ -245,6 +249,7 @@ export class HubScene extends Phaser.Scene {
     const tabBtn = (tab: Tab, text: string, o: { danger?: boolean } = {}): void => add(text, () => this.open(tab), { primary: this.tab === tab, ...o });
     tabBtn('board', 'Tablica zleceń' + (st.contracts.some((c) => c.story) ? ' ★' : ''));
     tabBtn('shop', 'Handlarz');
+    tabBtn('workshop', 'Warsztat');
     tabBtn('heal', 'Lecznica');
     tabBtn('party', 'Drużyna');
     if (st.party.length < MAX_PARTY || st.party.some((c) => c.conditions.dead)) tabBtn('tavern', 'Karczma', { danger: this.tab !== 'tavern' });
@@ -416,7 +421,19 @@ export class HubScene extends Phaser.Scene {
     for (const c of st.party) for (const inst of c.inventory) mine.push({ inst, src: shortName(c.name), arr: c.inventory });
     const list = new ScrollList<(typeof mine)[number]>(this, RX, 10, CW - 6, 196, 14, ({ inst, src, arr }, row, w) => {
       const price = sellPrice(inst.id, st);
-      this.itemRow(row, w - 44, inst.id, inst.qty, src);
+      const uses = partUses(inst.id);
+      this.itemRow(row, w - (uses.length ? 60 : 44), inst.id, inst.qty, src);
+      if (uses.length) {
+        // część do warsztatu: zamiast sprzedaży trafia do magazynu części (receptury: core/data/recipes.ts)
+        const wb = miniButton(this, w - 58, 1, 'W', () => {
+          if (!storePart(st, inst, arr)) return;
+          SoundManager.sfx('pickup');
+          toast(this, `${itemDef(inst.id)?.name ?? inst.id}: do warsztatu.`);
+          this.redraw();
+        }, { w: 14 });
+        this.tip.attach(wb.box.list[1] as Phaser.GameObjects.Rectangle, () => `Do warsztatu (nie sprzedawaj).\nPrzyda się w ${uses.length} ${uses.length === 1 ? 'recepturze' : 'recepturach'}: ${uses.map((r) => (recipeState(st, r.id) === 'unknown' ? '???' : itemDef(r.out.id)?.name ?? r.id)).join(', ')}.`);
+        row.add(wb.box);
+      }
       row.add(miniButton(this, w - 42, 1, price ? `+${price} Z` : '—', () => {
         if (!sell(st, inst, arr)) return;
         SoundManager.sfx('coin');
@@ -425,6 +442,116 @@ export class HubScene extends Phaser.Scene {
     }, this.body);
     list.empty = 'Nic do sprzedania.';
     list.setItems(mine);
+  }
+
+  // ================================================================== warsztat (core/campaign/tech.ts)
+
+  private draw_workshop(): void {
+    const st = this.st, t = techOf(st);
+    const vis = (r: RecipeDef) => recipeState(st, r.id);
+    const order = { known: 0, hinted: 1, unknown: 2 } as const;
+    const list = [...RECIPES].sort((a, b) => order[vis(a)] - order[vis(b)] || a.level - b.level);
+    const cur = list.find((r) => r.id === this.selRecipe) ?? list[0];
+    this.selRecipe = cur.id;
+    const LW = 150;
+    new ScrollList<RecipeDef>(this, 6, 0, LW, 196, 24, (r, row, w) => {
+      const on = r === cur, v = vis(r), locked = r.level > t.level;
+      const bg = this.add.rectangle(0, 0, w, 22, on ? 0x3a2c1e : PAL.panel2, 1).setOrigin(0).setStrokeStyle(1, on ? PAL.edgeHi : PAL.edge).setInteractive({ useHandCursor: true });
+      bg.on('pointerdown', () => {
+        SoundManager.sfx('click');
+        this.selRecipe = r.id;
+        this.redraw();
+      });
+      row.add(bg);
+      if (v !== 'unknown') row.add(itemIconImage(this, 3, 6, r.out.id, 10));
+      const name = v === 'unknown' ? '???' : (itemDef(r.out.id)?.name ?? r.out.id) + (r.out.qty > 1 ? ` ×${r.out.qty}` : '');
+      row.add(label(this, 16, 3, cut(name, 22), { size: 6, bold: true, color: v === 'known' ? PAL.good : v === 'hinted' ? PAL.text : PAL.dim }));
+      const sub = locked ? `Wymaga: ${WORKSHOP_LEVELS[r.level].name}` : BRANCH_NAMES[r.branch];
+      row.add(label(this, 16, 12, cut(sub, 30), { size: 5, color: locked ? PAL.bad : PAL.dim }));
+      if (v === 'known') row.add(label(this, w - 4, 3, 'SCHEMAT', { size: 5, bold: true, color: PAL.good }).setOrigin(1, 0));
+    }, this.body).setItems(list);
+
+    // ---- szczegóły receptury
+    const RX = LW + 14, RW = 364 - RX;
+    this.body.add(this.add.rectangle(RX - 4, 0, 1, BH - 4, PAL.edge).setOrigin(0));
+    const v = vis(cur), out = itemDef(cur.out.id);
+    let y = 0;
+    if (v === 'unknown') {
+      this.L(RX, y, 'NIEZNANA RECEPTURA', { size: 7, bold: true, color: PAL.dim });
+      y += 12;
+      y += this.L(RX, y, showHint(st, cur) ? `„${cur.hint}”` : 'Zdobądź na misjach części, które do niej pasują - wtedy pojawi się podpowiedź.', { size: 6, italic: true, wrap: RW, color: PAL.dim }).displayHeight + 6;
+    } else {
+      this.body.add(itemIconImage(this, RX, y, cur.out.id, 14));
+      this.L(RX + 18, y + 2, `${out?.name ?? cur.out.id}${cur.out.qty > 1 ? ` ×${cur.out.qty}` : ''}`, { size: 7, bold: true, color: v === 'known' ? PAL.good : PAL.amber });
+      y += 17;
+      y += this.L(RX, y, out?.desc ?? '', { size: 5.5, wrap: RW, color: PAL.dim, lineSpacing: 1 }).displayHeight + 4;
+      this.L(RX, y, 'CZĘŚCI', { size: 6, bold: true, color: PAL.amber });
+      y += 9;
+      for (const p of cur.parts) {
+        const have = partCount(st, p.id), enough = have >= p.qty;
+        this.body.add(itemIconImage(this, RX, y, p.id, 9));
+        this.L(RX + 12, y + 1, `${itemDef(p.id)?.name ?? p.id}`, { size: 6, color: enough ? PAL.text : PAL.dim });
+        this.L(RX + RW - 2, y + 1, `${Math.min(have, 99)}/${p.qty}`, { size: 6, bold: true, color: enough ? PAL.good : PAL.bad }).setOrigin(1, 0);
+        y += 11;
+      }
+      y += 4;
+    }
+    const tech = bestTechnician(st);
+    if (v !== 'known') {
+      const block = researchBlock(st, cur.id);
+      if (v !== 'unknown') {
+        y += this.L(RX, y, `Opracowanie: ${cur.scrap} Z, ${cur.days} dn. · Technika ST ${researchDC(cur)}${tech ? ` (${shortName(tech.ch.name)} ${signed(tech.mod)})` : ''}`, { size: 5.5, wrap: RW }).displayHeight + 2;
+        y += this.L(RX, y, 'Pierwszy egzemplarz gratis; potem handlarz ma go zawsze na stanie.', { size: 5, color: PAL.dim, wrap: RW }).displayHeight + 3;
+      }
+      const btn = button(this, RX, y, v === 'unknown' ? 'Nieznany schemat' : `Opracuj (${cur.scrap} Z, ${cur.days} dn.)`, () => {
+        const r = research(st, cur.id);
+        if (!r.ok) {
+          SoundManager.sfx('error');
+          return toast(this, r.reason ?? 'Nie można.', 'bad');
+        }
+        SoundManager.sfx(r.learned ? 'buy' : 'error');
+        toast(this, `${r.text} Dzień ${st.day}.`, r.learned ? 'good' : 'bad');
+        this.redraw();
+      }, { w: RW, h: 15, size: 6, primary: !block, enabled: !block && v !== 'unknown' });
+      this.body.add(btn.box);
+      y += 18;
+      if (block && v !== 'unknown') this.L(RX, y, block, { size: 5.5, color: PAL.bad, wrap: RW });
+    } else {
+      const cost = craftCost(cur);
+      y += this.L(RX, y, 'Schemat opracowany: handlarz ma ten przedmiot na stanie.', { size: 5.5, color: PAL.good, wrap: RW }).displayHeight + 3;
+      this.body.add(button(this, RX, y, `Wytwórz z części (${cost} Z)`, () => {
+        const r = craft(st, cur.id);
+        if (!r.ok) {
+          SoundManager.sfx('error');
+          return toast(this, r.reason ?? 'Nie można.', 'bad');
+        }
+        SoundManager.sfx('buy');
+        toast(this, `Gotowe: ${out?.name ?? cur.out.id} trafia do skrytki.`, 'good');
+        this.redraw();
+      }, { w: RW, h: 15, size: 6, primary: true, enabled: st.scrap >= cost && cur.parts.every((p) => partCount(st, p.id) >= p.qty) }).box);
+    }
+
+    // ---- poziom warsztatu
+    const by = BH - 58;
+    this.body.add(this.add.rectangle(RX, by, RW, 52, PAL.panel2, 1).setOrigin(0).setStrokeStyle(1, PAL.edge));
+    this.L(RX + 4, by + 3, `${WORKSHOP_LEVELS[t.level].name.toUpperCase()} (poz. ${t.level})`, { size: 6, bold: true, color: PAL.amber });
+    this.L(RX + RW - 4, by + 3, `Schematy: ${t.known.length}`, { size: 5.5, color: PAL.dim }).setOrigin(1, 0);
+    const nx = nextLevel(st);
+    if (nx) {
+      const def = WORKSHOP_LEVELS[nx.level];
+      const need = [`${def.known} schematy`, def.part ? itemDef(def.part)?.name ?? def.part : '', `${def.scrap} Z`].filter(Boolean).join(' + ');
+      this.L(RX + 4, by + 13, `Rozbudowa: ${def.name} — ${need}`, { size: 5.5, wrap: RW - 8 });
+      this.body.add(button(this, RX + 4, by + 35, nx.missing.length ? `Brakuje: ${nx.missing.join(', ')}` : `Rozbuduj: ${def.name}`, () => {
+        const r = upgradeWorkshop(st);
+        if (!r.ok) {
+          SoundManager.sfx('error');
+          return toast(this, r.reason ?? 'Nie można.', 'bad');
+        }
+        SoundManager.sfx('buy');
+        toast(this, `Warsztat rozbudowany: ${def.name}.`, 'good');
+        this.redraw();
+      }, { w: RW - 8, h: 13, size: 5.5, primary: !nx.missing.length, enabled: !nx.missing.length }).box);
+    } else this.L(RX + 4, by + 14, 'Warsztat w pełni rozbudowany.', { size: 5.5, color: PAL.good });
   }
 
   // ================================================================== lecznica

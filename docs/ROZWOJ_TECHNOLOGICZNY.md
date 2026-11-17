@@ -1,6 +1,18 @@
 # Rozwój technologiczny: fanty -> schematy -> nowy sprzęt u handlarza
 
-Status: **projekt** (nic z tego nie jest jeszcze w kodzie). Etapy wdrożenia na końcu.
+Status: **etapy 1-2 wdrożone** (2026-11-17): `src/core/data/recipes.ts`, `src/core/campaign/tech.ts`, zakładka
+Warsztat w `HubScene`, przycisk „W” (do warsztatu) przy fantach w sklepie. Reszta to plan (etapy na końcu).
+
+### Stan w kodzie (etapy 1-2)
+- Receptury: wytrychy, koktajl Mołotowa ×2, ładunek dynamitu (poz. 0); bomba zegarowa, granat EMP (poz. 1).
+  Bandaż przesunięty na później (wymaga nowych fantów: szmata, bimber); EMP od poziomu 1 zamiast 2.
+- Nowe przedmioty: fant `dynamite` (łupy: podpalacz, psychol; skrytki `@any`), `dynamite_charge`, `time_bomb`.
+  `old_watch` wypada też ze zbirów. Bomba zegarowa na razie rzucana (2 akcje, zasięg 3); odliczanie tur - etap 3.
+- Części liczą się z magazynu warsztatu (`TechState.parts`) i skrytki; zużywany najpierw magazyn.
+- Opracowanie: test Techniki najlepszego technika, ST 15 + 3 × poziom receptury; dni mijają jak odpoczynek (`restDay`).
+- Poziom 1 (Warsztat): 3 schematy + akumulator + 60 Z (rozbudowa przyciskiem, zużywa część).
+- Przedmioty `exclusive` (ładunek dynamitu, bomba zegarowa) nie trafiają do losowej oferty; opracowane schematy
+  są zawsze na początku listy handlarza.
 
 ## Idea w jednym zdaniu
 Fanty z misji przestają być tylko walutą: można je **oddać do Warsztatu w Przystani**, gdzie z odpowiedniego zestawu
@@ -124,9 +136,8 @@ Tu technologia rozwija **bazę**, nie tylko ekwipunek - dobrze łączy się z za
   zapis bez `tech` się wczytuje.
 
 ## Etapy wdrożenia
-1. **Rdzeń**: `recipes.ts`, `tech.ts`, stan + zapis, 5 receptur na istniejących fantach (bomba zegarowa
-   z nowym fantem *dynamit*, wytrychy, mołotow, bandaż, granat EMP), oferta handlarza, testy.
-2. **UI Warsztatu** w Przystani, „Do warsztatu” w sklepie, podpowiedzi „???”.
+1. ~~**Rdzeń**: `recipes.ts`, `tech.ts`, stan + zapis, 5 receptur, oferta handlarza, testy.~~ (zrobione)
+2. ~~**UI Warsztatu** w Przystani, „Do warsztatu” w sklepie, podpowiedzi „???”.~~ (zrobione)
 3. **Nowe fanty** w łupach wg biomu + bomba zegarowa jako akcja w walce (kładzenie ładunku, odliczanie tur).
 4. **Terminal i aplikacje hakerskie** (misja `hack`, drony).
 5. **Modyfikacje broni** i budowy w Przystani (wędzarnia, radio).
