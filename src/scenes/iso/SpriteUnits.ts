@@ -24,6 +24,14 @@ const PORTRAIT_URLS = import.meta.glob('../../assets/portraits/*.png', { eager: 
 /** Animacje szkieletowe PixelLab (skeleton-v3): src/assets/units/<id>/anims/<animacja>_<kierunek>.png, pasek kwadratowych klatek. */
 const STRIP_URLS = import.meta.glob('../../assets/units/*/anims/*.png', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
 
+/**
+ * Warianty broni: katalog src/assets/units/<id>~<rodzaj>/ (np. sowa~shotgun) - te same obroty postaci z inną bronią
+ * w ręku (PixelLab create-character-state, tools/pixellab_weapons.py). Sprite bazowy ma broń wpaloną w obraz, więc po
+ * zmianie broni w ekwipunku gra bierze wariant (UnitLooks.unitLookOf). Wariant ma tylko własne paski animacji
+ * (paski bazowe pokazywałyby starą broń); bez nich klatki są składane z obrotów.
+ */
+export const VARIANT_SEP = '~';
+
 /** Id postaci z kompletem obrotów. */
 const UNITS = new Set<string>();
 const PORTRAITS = new Set<string>();
@@ -64,6 +72,15 @@ export function spriteIdOf(src: { recruitId?: string; id?: string } | null | und
   const id = src.recruitId ?? (src.id && RECRUITS.some((r) => r.id === src.id) ? src.id : undefined);
   return id && UNITS.has(id) ? id : null;
 }
+
+/** Wariant sprite'a `id` z bronią `kind` (katalog <id>~<kind>), o ile istnieje. */
+export function spriteVariantId(id: string, kind: string): string | null {
+  const v = `${id}${VARIANT_SEP}${kind}`;
+  return UNITS.has(v) ? v : null;
+}
+
+/** Id postaci bez wariantu broni (portret i karta rekruta są wspólne). */
+export const spriteBaseId = (id: string): string => id.split(VARIANT_SEP)[0];
 
 /** Id sprite'a wroga: szablon (EnemyId, np. raider_thug) z katalogiem src/assets/units/<templateId>/. */
 export function enemySpriteId(templateId: string | null | undefined): string | null {

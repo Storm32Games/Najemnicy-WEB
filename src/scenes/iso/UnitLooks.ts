@@ -8,7 +8,7 @@ import { mix, shade } from './Pixel';
 import { RECRUITS } from '../../core/data/recruits';
 import { hashStr } from './Pixel';
 import { addHiRes } from './HiRes';
-import { enemySpriteId, hasSprite, paintSpriteSheet, spriteIdOf, type SheetAnim } from './SpriteUnits';
+import { enemySpriteId, hasSprite, paintSpriteSheet, spriteIdOf, spriteVariantId, type SheetAnim } from './SpriteUnits';
 import {
   ANIMS, ANIM_ORDER, type AncestryLook, type BodyBuild, type HeadKind, LOOK_RAIDER, LOOK_SOLDIER, UNIT_FH, UNIT_FOOT_X, UNIT_FOOT_Y, UNIT_FW,
   type UnitLook, type UnitSheet, type WeaponKind, paintUnitSheet,
@@ -89,6 +89,32 @@ function defaultWeapon(cls: string): WeaponKind {
   return MELEE.has(cls) ? 'pipe' : 'rifle';
 }
 
+/**
+ * Grupa broni dla wariantów sprite'ów PixelLab (katalogi <id>~<grupa>): sylwetki broni w obrębie grupy są podobne,
+ * więc wystarcza jeden wariant na grupę.
+ */
+export type WeaponGroup = 'rifle' | 'shotgun' | 'pistol' | 'bow' | 'blade' | 'blunt' | 'none';
+export const WEAPON_GROUPS: readonly WeaponGroup[] = ['rifle', 'shotgun', 'pistol', 'bow', 'blade', 'blunt', 'none'];
+export function weaponGroupOf(k: WeaponKind, itemId?: string): WeaponGroup {
+  if (itemId === 'laser_pistol') return 'pistol';
+  switch (k) {
+    case 'rifle': case 'longgun': case 'smg': case 'mg': case 'laser': case 'flamer': return 'rifle';
+    case 'shotgun': case 'pistol': case 'bow': case 'none': return k;
+    case 'knife': case 'machete': case 'scythe': return 'blade';
+    default: return 'blunt'; // pipe, sledge, axe
+  }
+}
+
+/** Grupa broni wpalonej w bazowy sprite rekruta (broń startowa klasy). */
+export const bakedWeaponGroup = (cls: string): WeaponGroup => weaponGroupOf(defaultWeapon(cls));
+
+/** Sprite postaci z bronią `weapon`: bazowy, gdy to broń startowa; inaczej wariant grupy (o ile wygenerowany). */
+export function weaponSpriteId(sprite: string, cls: string, weapon: WeaponKind, itemId?: string): string {
+  const g = weaponGroupOf(weapon, itemId);
+  if (g === bakedWeaponGroup(cls)) return sprite;
+  return spriteVariantId(sprite, weapon) ?? spriteVariantId(sprite, g) ?? sprite;
+}
+
 const asBody = (s: string | undefined): BodyBuild | undefined => (s === 'light' || s === 'medium' || s === 'heavy' ? s : undefined);
 
 export function unitLookOf(src: LookSource): UnitLook {
@@ -151,7 +177,7 @@ export function unitLookOf(src: LookSource): UnitLook {
   const sh = eq?.shield?.id;
   if (sh) look.shield = SHIELD_COLORS[sh] ?? 0x6a5a48;
   const sprite = spriteIdOf(src as { recruitId?: string; id?: string });
-  if (sprite) look.sprite = sprite;
+  if (sprite) look.sprite = weaponSpriteId(sprite, cls, weapon, eq?.weapon?.id);
   return look;
 }
 
@@ -327,6 +353,8 @@ export function enemySheet(templateId: string | undefined | null, look?: EnemyLo
 
 /** Podpis wyglądu, z którym namalowano teksturę (żeby po zmianie broni / ekwipunku odświeżyć arkusz). */
 const painted = new WeakMap<Phaser.Textures.Texture, string>();
+/** Tekstura, z której są zbudowane animacje `<name>_*` (sprite PixelLab: osobna tekstura na wariant broni). */
+const animTex = new Map<string, string>();
 
 /**
  * Buduje (raz) arkusz klatek i animacje idle/walk dla danego wyglądu. Zwraca klucz tekstury.
@@ -335,9 +363,19 @@ const painted = new WeakMap<Phaser.Textures.Texture, string>();
  * `build` (opcjonalnie) zastępuje paintUnitSheet(look), np. () => enemySheet(templateId, look).
  */
 export function ensureUnit(scene: Phaser.Scene, name: string, look: UnitLook | CreatureLook, build?: () => UnitSheet): string {
-  const tex = `unit_${name}`;
-  const sig = JSON.stringify(look);
   const sprite = !build && !isCreatureLook(look) && look.sprite && hasSprite(scene, look.sprite) ? look.sprite : null;
+  // sprite PixelLab: tekstura na wariant (zmiana broni = inny obraz i inny układ klatek, nie przemalowanie w miejscu)
+  const tex = sprite ? `unit_${name}|${sprite}` : `unit_${name}`;
+  const sig = JSON.stringify(look);
+  const prev = animTex.get(name);
+  if (prev !== tex) {
+    // animacje tej postaci wskazywały na inną teksturę (poprzedni wariant broni) - zbudować od nowa
+    if (prev) {
+      const all = (scene.anims as unknown as { anims: Phaser.Structs.Map<string, Phaser.Animations.Animation> }).anims;
+      for (const key of all.keys()) if (key.startsWith(`${name}_`) && all.get(key)?.frames[0]?.textureKey === prev) scene.anims.remove(key);
+    }
+    animTex.set(name, tex);
+  }
   const paint = (): UnitSheet =>
     sprite ? paintSpriteSheet(scene, sprite)
     : build ? build() : isCreatureLook(look) ? paintCreatureSheet(look.shape, look.skin, look.accent, look.creature) : paintUnitSheet(look);
