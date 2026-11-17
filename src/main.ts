@@ -76,6 +76,8 @@ const config: Phaser.Types.Core.GameConfig = {
 };
 
 const game = new Phaser.Game(config);
+// tryb deweloperski: dostęp do gry z konsoli / testów Playwright
+if (import.meta.env.DEV) (window as unknown as { __game: Phaser.Game }).__game = game;
 // Skalowanie CSS płótna (okno przeglądarki ma inny rozmiar niż preset). Powiększenie: najbliższy sąsiad - piksel
 // projektowy to >= 2 piksele płótna, więc zostaje ostry (wygładzanie rozmywało kontury postaci). Pomniejszenie:
 // wygładzanie, bo najbliższy sąsiad gubiłby całe wiersze płótna. Najostrzej: pełny ekran z presetem = rozdzielczość monitora.

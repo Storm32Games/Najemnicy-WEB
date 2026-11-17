@@ -67,6 +67,8 @@ export class HubScene extends Phaser.Scene {
   private t = 0;
   private fire: (t: number) => void = () => {};
   private dust: Motes | null = null;
+  /** Figurki drużyny przy ognisku (malowane od nowa w redraw: nowa broń po "Załóż", nowy rekrut). */
+  private partyFigs: Phaser.GameObjects.Sprite[] = [];
 
   constructor() {
     super('HubScene');
@@ -112,7 +114,7 @@ export class HubScene extends Phaser.Scene {
       },
     });
     this.fire = campfire(this, 432, 254, 1.4, 2);
-    st.party.forEach((ch, i) => addUnit(this, 398 + i * 22, 262 - (i % 2) * 5, `pc_${ch.recruitId ?? ch.id}`, unitLookOf(ch)).setDepth(3).setFlipX(i > 1));
+    this.partyFigs = [];
     this.townFolk();
     this.dust = new Motes(this, 50, { x: 380, y: 150, w: 100, h: 120 }, 0xf0c080, 8, 1, 6, 0.4, 1);
 
@@ -176,11 +178,18 @@ export class HubScene extends Phaser.Scene {
 
   private redraw(): void {
     this.tip.hide();
+    this.drawParty();
     this.drawTop();
     this.drawMenu();
     this.title.setText(TITLES[this.tab].toUpperCase());
     this.body.removeAll(true);
     this[`draw_${this.tab}`]();
+  }
+
+  /** Drużyna przy ognisku: wygląd z ekwipunku (wariant sprite'a z bronią w ręku, UnitLooks.unitLookOf). */
+  private drawParty(): void {
+    for (const f of this.partyFigs) f.destroy();
+    this.partyFigs = this.st.party.map((ch, i) => addUnit(this, 398 + i * 22, 262 - (i % 2) * 5, `pc_${ch.recruitId ?? ch.id}`, unitLookOf(ch)).setDepth(3).setFlipX(i > 1));
   }
 
   private open(tab: Tab): void {
