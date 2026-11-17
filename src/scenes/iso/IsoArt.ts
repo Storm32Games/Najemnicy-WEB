@@ -484,21 +484,44 @@ export function paintProp(type: PropType, rot: number, seed: number, biome: Biom
     const box = axisBox(pen, alongU);
     switch (type) {
       case 'car': {
-        // wrak samochodu: nadwozie z nadkolami, kabina ze słupkami i (wybitymi) szybami, rdza, zderzak, światła,
-        // koła z felgami / flaki / gołe felgi; warianty: spalony, otwarta maska, przód albo tył do widza
-        const burnt = R() < 0.22;
+        // wrak samochodu po latach w pustkowiu: wyblakły lakier pod kurzem i rdzą, martwe (wybite) światła,
+        // wybite szyby, przebite / zdjęte koła (puste nadkola), brakujące drzwi i maska, wgnieciony dach,
+        // przestrzeliny, plama oleju i części rozwleczone obok; warianty: spalony, przód albo tył do widza
+        const burnt = R() < 0.3;
         const paint = CAR_COLS[(R() * CAR_COLS.length) | 0];
-        const body = burnt ? ramp(0x3a2a20, 6, 0.3) : ramp(mix(paint, 0x6a6458, 0.28), 6, 0.48);
+        const dust = biome === 'wastes' ? 0xb49a6c : 0x8a8274;
+        const body = burnt ? ramp(0x3a2a20, 6, 0.3) : ramp(mix(mix(paint, 0x6a6458, 0.3), dust, 0.1), 6, 0.45);
         const frontNear = R() < 0.55; // widoczny koniec (+oś) to przód
-        const hoodOpen = !burnt && frontNear && R() < 0.35;
-        const smashed = burnt || R() < 0.4;
-        const flatTire = [R() < 0.45, R() < 0.45];
+        const hood: 'shut' | 'open' | 'gone' = burnt ? 'gone' : frontNear ? (R() < 0.3 ? 'open' : R() < 0.5 ? 'gone' : 'shut') : 'shut';
+        // koła (bliższa strona): całe, flak, goła felga, brak (puste nadkole)
+        type Wheel = 'tire' | 'flat' | 'rim' | 'none';
+        const wheel = (): Wheel => { const q = R(); return burnt ? (q < 0.5 ? 'rim' : 'none') : q < 0.2 ? 'tire' : q < 0.55 ? 'flat' : q < 0.8 ? 'rim' : 'none'; };
+        const W: Wheel[] = [wheel(), wheel()];
+        const doorGone = !burnt && R() < 0.35; // przednie drzwi od strony widza
+        const roofCaved = R() < 0.35;
+        const shot = R() < 0.4; // podziurawiony kulami
         const A0 = 0.03, A1 = 0.97, B0 = 0.27, B1 = 0.73;
         const LEN = (A1 - A0) * 16, WID = (B1 - B0) * 16;
         const glassR = ramp(0x3a4c5c, 5, 0.5);
-        const rusty = (x: number, y: number): boolean => vnoise(x / 2.6, y / 2.6, seed) > (burnt ? 0.52 : 0.64);
-        const paintAt = (x: number, y: number, lit: number): RGB =>
-          rusty(x, y) ? pick(RUST, lit * 0.8 + (hash2(x, y, seed) - 0.5) * 0.3, x, y) : pick(body, lit + (hash2(x, y, seed) - 0.5) * 0.1, x, y);
+        const at = (a: number, b: number): [number, number] => (alongU ? [a, b] : [b, a]);
+        /** `bias` > 0 = więcej rdzy (dół nadwozia), < 0 = mniej (dach). */
+        const rusty = (x: number, y: number, bias = 0): boolean => vnoise(x / 1.7, y / 1.7, seed) > (burnt ? 0.58 : 0.68) - bias;
+        const rust = burnt ? ramp(0x5a3424, 5, 0.35) : RUST;
+        const soot = (x: number, y: number): boolean => vnoise(x / 3, y / 3, seed + 21) > 0.6;
+        const holeAt = (x: number, y: number): RGB => {
+          if (!shot) return -1;
+          const h = hash2(x, y, seed + 11);
+          return h < 0.035 ? 0x0a0806 : h < 0.05 ? 0x9a948a : -1;
+        };
+        const paintAt = (x: number, y: number, lit: number, bias = 0): RGB => {
+          if (burnt && soot(x, y)) return pick(ramp(0x1c1612, 4, 0.3), lit, x, y);
+          if (rusty(x, y, bias)) return pick(rust, lit * 0.8 + (hash2(x, y, seed) - 0.5) * 0.3, x, y);
+          const dent = vnoise(x / 3, y / 3, seed + 5) > 0.74 ? -0.12 : 0; // wgniecenia
+          return pick(body, lit + dent + (hash2(x, y, seed) - 0.5) * 0.14, x, y);
+        };
+        /** Górne płaszczyzny: kurz / piasek nawiany na lakier. */
+        const dusty = (x: number, y: number, lit: number, bias = 0): RGB =>
+          !burnt && vnoise(x / 2.4, y / 2.4, seed + 9) > 0.7 ? pick(ramp(dust, 5, 0.35), lit - 0.1, x, y) : paintAt(x, y, lit, bias);
         // bryła z własnymi wypełnieniami: side(t, z) - długi bok (t = 0 tył .. 1 widoczny koniec), end(q, z) - widoczny koniec (q = 0..1 w poprzek)
         const carBox = (
           a0: number, a1: number, b0: number, b1: number, z0: number, z1: number,
@@ -519,67 +542,129 @@ export function paintProp(type: PropType, rot: number, seed: number, biome: Biom
             });
         };
         const SIDE = alongU ? 0.56 : 0.3, END = alongU ? 0.3 : 0.56; // światło z lewej-góry
+        // plama oleju / sadzy pod wrakiem
+        pen.flat(...at(A0 + 0.1, B0 - 0.04), ...at(A1 - 0.05, B1 + 0.12), 0,
+          (x, y, u, v) => { const [a, b] = alongU ? [u, v] : [v, u]; const d = Math.hypot((a - 0.55) * 1.4, (b - 0.55) * 2.2); return d < 0.5 && vnoise(x / 2, y / 2, seed + 3) > 0.35 + d * 0.5 ? (burnt ? 0x141010 : 0x161418) : -1; }, 150);
         alongU ? castShadow(pen, A0, B0, A1, B1 + 0.04, 0.3, 80) : castShadow(pen, B0, A0, B1 + 0.04, A1, 0.3, 80);
-        // koła (tylne w cieniu pod nadwoziem, bliższe z felgą); t-pozycje osi
         const AX = [0.2, 0.8];
-        const tire = ramp(0x1c1814, 4, 0.25), rim = ramp(0x6a6a6a, 4, 0.4);
+        const tire = ramp(0x1c1814, 4, 0.25), rim = ramp(0x6a625a, 4, 0.4);
+        // dalsze koła (w cieniu pod nadwoziem)
         AX.forEach((t, i) => {
+          if (W[i] === 'none') return;
           const a = A0 + (A1 - A0) * t - 0.09;
-          box(a, a + 0.18, B0 - 0.01, B0 + 0.06, 0, 4, tire);
-          if (burnt) box(a + 0.03, a + 0.15, B1 - 0.05, B1 + 0.02, 0, 3, rim); // sama felga
-          else box(a - (flatTire[i] ? 0.02 : 0), a + 0.18 + (flatTire[i] ? 0.02 : 0), B1 - 0.05, B1 + 0.03, 0, flatTire[i] ? 3 : 5, tire);
+          box(a, a + 0.18, B0 - 0.01, B0 + 0.06, 0, W[i] === 'tire' ? 4 : 3, W[i] === 'rim' ? rim : tire);
         });
-        // dolna część nadwozia z nadkolami
-        carBox(A0, A1, B0, B1, flatTire[0] && flatTire[1] ? 1 : 2, 7,
+        // nadwozie osiada tam, gdzie brakuje kół
+        const sag = W.every((w) => w === 'none') ? 0 : W.some((w) => w === 'none' || w === 'rim') ? 1 : W.some((w) => w === 'flat') ? 1 : 2;
+        const ZT = 7;
+        const doorT = (t: number): boolean => doorGone && t > (frontNear ? 0.38 : 0.37) && t < (frontNear ? 0.63 : 0.62);
+        carBox(A0, A1, B0, B1, sag, ZT,
           (x, y, t, z) => {
-            for (const c of AX) { const d = Math.abs(t - c) * LEN; if (d < 2.4 && z < 5.2 - d * d * 0.45) return z < 4 ? (burnt ? 0x4a4a48 : d < 1 && z > 1.5 && z < 3.6 ? 0x8a8a84 : 0x100c0a) : 0x0c0908; }
-            if (z < 3) return pick(DARK_METAL, 0.3, x, y); // próg
-            if (z >= 6) return paintAt(x, y, SIDE + 0.22); // linia boczna
+            for (let i = 0; i < 2; i++) {
+              const d = Math.abs(t - AX[i]) * LEN;
+              if (d < 2.4 && z < 5.2 - d * d * 0.45) {
+                const w = W[i];
+                if (w === 'none') return z < 1.2 + sag ? -1 : 0x0a0807; // puste nadkole
+                if (w === 'rim') return z < 4 && d < 1.6 ? pick(rim, 0.3 + (d < 0.7 ? 0.3 : 0), x, y) : 0x0c0908;
+                if (w === 'flat') return z < 3.2 ? (d < 0.8 && z > 1.2 ? 0x5a5650 : 0x100c0a) : 0x0c0908;
+                return z < 4 ? (d < 1 && z > 1.5 && z < 3.6 ? 0x6a6660 : 0x100c0a) : 0x0c0908;
+              }
+            }
+            if (doorT(t) && z >= 2.5) return z > 5.5 ? 0x2a2420 : 0x14100e; // wnętrze bez drzwi
+            const hole = holeAt(x, y);
+            if (hole >= 0 && z > 3) return hole;
+            if (z < 3) return pick(burnt ? DARK_METAL : rust, 0.25, x, y); // przegniły próg
+            if (z >= 6) return paintAt(x, y, SIDE + 0.22, -0.05); // linia boczna
             if (Math.abs(t - 0.38) * LEN < 0.5 || Math.abs(t - 0.63) * LEN < 0.5) return pick(body, SIDE - 0.3, x, y); // szczeliny drzwi
-            return paintAt(x, y, SIDE);
+            return paintAt(x, y, SIDE, z < 4.5 ? 0.14 : 0.04);
           },
           (x, y, q, z) => {
-            if (z < 3.6) return pick(METAL, burnt ? 0.2 : 0.55 - Math.abs(q - 0.5) * 0.3, x, y); // zderzak
             const edge = Math.min(q, 1 - q) * WID;
-            if (z < 6 && edge < 2.2 && edge > 0.4) return burnt ? 0x1a1410 : frontNear ? (q < 0.5 && smashed ? 0x2a2620 : 0xf0e8c0) : 0xa82818; // reflektory / tylne lampy
-            if (frontNear && z < 6 && edge >= 2.2) return ((x + y) & 1) ? 0x14100e : 0x2a2622; // atrapa chłodnicy
-            if (!frontNear && z < 5 && Math.abs(q - 0.5) * WID < 1.4) return burnt ? 0x2a2018 : 0xd8d0b0; // tablica
-            return paintAt(x, y, END);
+            if (z < 3.6) {
+              if (!burnt && frontNear && q > 0.62 && z < 2.4) return -1; // urwany kawałek zderzaka
+              return pick(burnt ? DARK_METAL : RUST, burnt ? 0.2 : 0.45 - Math.abs(q - 0.5) * 0.3, x, y); // zardzewiały zderzak
+            }
+            if (z < 6 && edge < 2.2 && edge > 0.4) // martwe światła: puste oprawy, resztki szkła
+              return burnt ? 0x1a1410 : frontNear ? (hash2(x, y, seed + 7) < 0.25 ? 0x8a8a7a : 0x161412) : hash2(x, y, seed + 7) < 0.4 ? 0x5a2018 : 0x1a1210;
+            if (frontNear && z < 6 && edge >= 2.2) return ((x + y) & 1) ? 0x14100e : (hood === 'gone' ? 0x3a2a20 : 0x2a2622); // atrapa
+            if (!frontNear && z < 5 && Math.abs(q - 0.5) * WID < 1.4) return burnt ? 0x2a2018 : 0x8a8270; // wyblakła tablica
+            return paintAt(x, y, END, z < 4.5 ? 0.14 : 0.04);
           },
           (x, y, t) => {
-            if (hoodOpen && t > 0.74) return ((x + y) & 1) ? 0x14100e : pick(DARK_METAL, 0.4 + hash2(x, y, seed) * 0.3, x, y); // komora silnika
-            return paintAt(x, y, 0.78 + (t > 0.97 || t < 0.03 ? 0.12 : 0));
+            if (hood !== 'shut' && t > 0.74) { // komora silnika: blok, przewody, rdza
+              const h = hash2(x, y, seed + 2);
+              return h < 0.3 ? 0x0e0c0a : h < 0.55 ? pick(RUST, 0.3 + h, x, y) : pick(DARK_METAL, 0.3 + h * 0.4, x, y);
+            }
+            return dusty(x, y, 0.78 + (t > 0.97 || t < 0.03 ? 0.12 : 0), -0.06);
           });
-        // kabina: słupki, szyby (całe / wybite), dach
+        // kabina: słupki, szyby (prawie zawsze wybite), dach (czasem wgnieciony)
         const C0 = frontNear ? 0.22 : 0.3, C1 = frontNear ? 0.66 : 0.74;
         const ca0 = A0 + (A1 - A0) * C0, ca1 = A0 + (A1 - A0) * C1, cLen = (ca1 - ca0) * 16;
+        const ROOF = roofCaved ? 10.5 : 12, rz = ROOF - 1.2;
         const glassAt = (x: number, y: number, z: number, lit: number, broken: boolean): RGB => {
           if (burnt) return hash2(x, y, seed + 3) < 0.2 ? 0x2a2018 : 0x0a0808;
-          if (broken) return hash2(x, y, seed + 3) < 0.28 ? glassR[4] : 0x0e0c10; // odłamki w ramie
-          return (x + y * 2 + seed) % 7 === 0 ? glassR[4] : pick(glassR, lit + (z - 9) * 0.08, x, y);
+          if (broken) return hash2(x, y, seed + 3) < 0.22 ? glassR[4] : 0x0e0c10; // odłamki w ramie
+          // brudna, popękana szyba
+          if (hash2(x, y, seed + 4) < 0.18) return pick(ramp(dust, 4, 0.3), 0.4, x, y);
+          return (x + y * 2 + seed) % 5 === 0 ? glassR[3] : pick(glassR, lit - 0.15 + (z - 9) * 0.08, x, y);
         };
-        const sideBroken = [smashed && R() < 0.7, smashed && R() < 0.5];
-        carBox(ca0, ca1, B0 + 0.02, B1 - 0.02, 7, 12,
+        const sideBroken = [R() < 0.8, R() < 0.65];
+        const frontBroken = burnt || R() < 0.75;
+        carBox(ca0, ca1, B0 + 0.02, B1 - 0.02, ZT, ROOF,
           (x, y, t, z) => {
             const sx = t * cLen;
-            if (z > 10.8 || sx < 0.9 || sx > cLen - 0.9 || Math.abs(sx - cLen / 2) < 0.55) return paintAt(x, y, SIDE + (z > 10.8 ? 0.2 : -0.05)); // dach / słupki A-B-C
+            const tg = C0 + t * (C1 - C0);
+            if (z > rz || sx < 0.9 || sx > cLen - 0.9 || Math.abs(sx - cLen / 2) < 0.55) { // dach / słupki A-B-C
+              if (doorT(tg) && z <= rz) return 0x14100e;
+              return paintAt(x, y, SIDE + (z > rz ? 0.2 : -0.05));
+            }
+            if (doorT(tg)) return z > 9 ? 0x2a2420 : 0x14100e; // wnętrze: oparcie fotela
             return glassAt(x, y, z, 0.45, sideBroken[sx < cLen / 2 ? 0 : 1]);
           },
           (x, y, q, z) => {
             const e = Math.min(q, 1 - q) * (WID - 0.64);
-            if (z > 10.8 || e < 0.8) return paintAt(x, y, END + (z > 10.8 ? 0.15 : 0));
-            return glassAt(x, y, z, 0.3, smashed);
+            if (z > rz || e < 0.8) return paintAt(x, y, END + (z > rz ? 0.15 : 0));
+            return glassAt(x, y, z, 0.3, frontBroken);
           },
-          (x, y, t) => paintAt(x, y, 0.74 + (t < 0.12 ? 0.14 : 0)));
-        if (hoodOpen) {
+          (x, y, t) => {
+            if (roofCaved && t > 0.25 && t < 0.8 && vnoise(x / 2, y / 2, seed + 13) > 0.5) return pick(body, 0.4, x, y); // wgniecenie
+            return dusty(x, y, 0.74 + (t < 0.12 ? 0.14 : 0), -0.06);
+          });
+        if (hood === 'open') {
           // uniesiona maska oparta o podszybie
           const h0 = A0 + (A1 - A0) * (C1 + 0.02), h1 = h0 + 0.05;
-          carBox(h0, h1, B0 + 0.02, B1 - 0.02, 7, 12, (x, y) => paintAt(x, y, SIDE), (x, y) => pick(body, END - 0.1 + (hash2(x, y, 4) - 0.5) * 0.1, x, y), (x, y) => paintAt(x, y, 0.85));
+          carBox(h0, h1, B0 + 0.02, B1 - 0.02, ZT, ROOF, (x, y) => paintAt(x, y, SIDE), (x, y) => pick(body, END - 0.1 + (hash2(x, y, 4) - 0.5) * 0.1, x, y), (x, y) => paintAt(x, y, 0.85));
         }
-        // jasna krawędź dachu i maski od strony światła
+        // jasna krawędź dachu od strony światła (przerwana rdzą)
         const hi = body[5];
-        if (alongU) pen.pc.line(...pen.p(ca0, B1 - 0.02, 12), ...pen.p(ca1, B1 - 0.02, 12), rusty(...pen.p(ca0, B1, 12)) ? RUST[4] : hi);
-        else pen.pc.line(...pen.p(B1 - 0.02, ca0, 12), ...pen.p(B1 - 0.02, ca1, 12), hi);
+        const [ex0, ey0] = alongU ? pen.p(ca0, B1 - 0.02, ROOF) : pen.p(B1 - 0.02, ca0, ROOF);
+        const [ex1, ey1] = alongU ? pen.p(ca1, B1 - 0.02, ROOF) : pen.p(B1 - 0.02, ca1, ROOF);
+        pen.pc.line(ex0, ey0, ex1, ey1, (x, y) => (rusty(x, y) || burnt ? rust[2] : hi));
+        // bliższe koła (wystają przed bok)
+        AX.forEach((t, i) => {
+          const a = A0 + (A1 - A0) * t - 0.09;
+          if (W[i] === 'tire') box(a, a + 0.18, B1 - 0.05, B1 + 0.03, 0, 5, tire);
+          else if (W[i] === 'flat') box(a - 0.02, a + 0.2, B1 - 0.05, B1 + 0.03, 0, 3, tire);
+          else if (W[i] === 'rim') box(a + 0.03, a + 0.15, B1 - 0.05, B1 + 0.02, 0, 3, rim);
+          else if (!burnt && R() < 0.6) box(a + 0.04, a + 0.14, B1 - 0.08, B1 - 0.01, 0, 2, CONCRETE); // pustak zamiast koła
+        });
+        // części rozwleczone obok wraku (po stronie widza)
+        const parts: (() => void)[] = [];
+        if (W.some((w) => w === 'none' || w === 'rim') && R() < 0.7) {
+          const a = 0.15 + R() * 0.6, b = 0.86 + R() * 0.04;
+          parts.push(() => { // zdjęta opona leżąca płasko: czarny krążek z dziurą
+            pen.flat(...at(a, b), ...at(a + 0.16, b + 0.1), 0, (x, y, u, v) => { const [p, q] = alongU ? [u, v] : [v, u]; const d = Math.hypot((p - a - 0.08) / 0.08, (q - b - 0.05) / 0.05); return d > 1 ? -1 : d < 0.4 ? -1 : d < 0.6 ? 0x4a4640 : pick(tire, 0.3 + (1 - d) * 0.4, x, y); });
+          });
+        }
+        if (doorGone) {
+          const a = 0.2 + R() * 0.45;
+          parts.push(() => box(a, a + 0.26, 0.82, 0.93, 0, 1, body)); // odpadnięte drzwi
+        }
+        if (hood === 'gone' && !burnt && R() < 0.6) {
+          const a = 0.5 + R() * 0.25;
+          parts.push(() => box(a, a + 0.24, 0.8, 0.94, 0, 1, RUST));
+        }
+        parts.forEach((f) => f());
         if (biome === 'wastes') {
           // nawiany piasek przy kołach
           const sand = ramp(0xc4a064, 5, 0.4);
