@@ -3,9 +3,9 @@ import { FOLIAGE, bush, grass, ivy, leafyTree } from './Nature';
 import { type ColorIn, css, glow, line, mix, rgbOf } from './Painter';
 
 // Przystań na planszy 5 intro: dawna zajezdnia tramwajowa po zagładzie, zamieniona w osadę.
-// Ceglana hala z trzema łukowymi bramami na tory (jedna zaspawana blachą, środkowa otwarta z tramwajem w środku,
+// Ceglana hala z trzema łukowymi bramami na tory (jedna zaspawana blachą, środkowa otwarta z lokomotywą w środku,
 // prawa zawalona i zabita deskami), zawalony narożnik szczytu z odsłoniętymi kratownicami i brzozą z wyrwy,
-// mur z wraków tramwajów, blach i opon pod drutem kolczastym, wieże z rur i worków z piaskiem, wygięte słupy
+// zniszczony skład kolejowy obok hali (wykolejona lokomotywa, wagon kryty, przewrócona cysterna, węglarka), wieże z rur i worków z piaskiem, wygięte słupy
 // trakcji z zerwanymi drutami, girlandy żarówek. Noc: księżyc z prawej (chłodna obwódka), ciepłe światło z bram.
 // Wszystko w pikselach projektowych; (ox) - przesunięcie warstwy paralaksy.
 
@@ -23,8 +23,15 @@ const BRICK = ['#2a1a18', '#341f1c', '#3e2620', '#4a2c24', '#5a3628'] as const;
 const MORTAR = '#1a1210';
 const MOON = '#6a7aa0';
 const WARM = '#ffb050';
+/** Szum 0..1 z liczb całkowitych (deterministyczny). */
+const hash = (a: number, b: number): number => {
+  const v = Math.sin(a * 127.1 + b * 311.7) * 43758.5453;
+  return v - Math.floor(v);
+};
+/** Rdza w łatach: grube komórki 4x3 decydują o plamie, piksele w środku poszarpane. */
+const rusty = (x: number, y: number, amount = 0.22): boolean => hash(Math.floor(x / 4), Math.floor(y / 3)) < amount && hash(x, y) > 0.35;
 
-export function paintDepot(g: Ctx2D, ox: number, r: R): { bulbs: [number, number][]; sparks: [number, number] } {
+export function paintDepot(g: Ctx2D, ox: number, r: R): { bulbs: [number, number][]; sparks: [number, number]; cat: [number, number] } {
   const P = (c: ColorIn, x: number, y: number, w = 1, h = 1): void => {
     g.fillStyle = css(c);
     g.fillRect(Math.round(ox + x), Math.round(y), Math.round(w), Math.round(h));
@@ -144,30 +151,33 @@ export function paintDepot(g: Ctx2D, ox: number, r: R): { bulbs: [number, number
         }
       }
   }
-  // tramwaj stojący w środkowej bramie (przód wagonu pod światło)
+  // lokomotywa spalinowa stojąca w środkowej bramie (czoło pod światło): dwie szyby, tablica z numerem,
+  // reflektory (jeden zbity), biało-czerwone pasy ostrzegawcze, dwa zderzaki i hak
   {
     const tx = GATES[1], ty = base;
-    // przód wagonu: zaokrąglony dach, trzy okna w ciepłym świetle, numer linii, jeden reflektor zbity
-    P('#1e1610', tx - 15, ty - 40, 30, 40);
-    P('#1e1610', tx - 13, ty - 42, 26, 2);
-    P('#2a1e14', tx - 11, ty - 43, 22, 1);
-    for (const wx of [-12, -3, 6]) {
-      P('#ffcf70', tx + wx, ty - 36, 7, 11);
-      P('#fff0b0', tx + wx, ty - 36, 2, 4);
-      P('#1e1610', tx + wx + 3, ty - 36, 1, 11);
+    P('#22301e', tx - 16, ty - 44, 32, 40);
+    P('#2a3a26', tx - 14, ty - 46, 28, 2);
+    P('#3a4a34', tx - 16, ty - 44, 1, 40);
+    for (const wx of [-13, 2]) {
+      P('#ffcf70', tx + wx, ty - 41, 11, 9);
+      P('#fff0b0', tx + wx, ty - 41, 3, 3);
+      P('#22301e', tx + wx, ty - 33, 11, 1);
     }
-    P('#3a2a1a', tx - 4, ty - 41, 8, 4); // tablica z numerem linii
-    P('#e8dcb0', tx - 2, ty - 40, 1, 2);
-    P('#e8dcb0', tx + 1, ty - 40, 2, 1);
-    P('#e8dcb0', tx + 2, ty - 39, 1, 1);
-    P('#7a2a1a', tx - 15, ty - 22, 30, 4); // czerwony pas
-    P('#5a2016', tx - 15, ty - 18, 30, 1);
-    P('#fff4c0', tx - 11, ty - 12, 4, 3); // reflektory
-    P('#3a2a1a', tx + 7, ty - 12, 4, 3);
-    P('#2a2420', tx - 15, ty - 4, 30, 2); // zderzak
-    L(tx - 2, ty - 43, tx - 9, ty - 54, '#2a2420'); // pantograf
-    L(tx - 9, ty - 54, tx + 5, ty - 55, '#2a2420');
-    glow(g, ox + tx, ty - 20, 34, 30, WARM, 0.35, { levels: 4, add: true });
+    L(tx + 3, ty - 41, tx + 8, ty - 34, '#1a1a1a'); // pęknięta szyba
+    L(tx + 8, ty - 34, tx + 12, ty - 37, '#1a1a1a');
+    P('#141a12', tx - 4, ty - 31, 8, 4); // tablica z numerem
+    for (const k of [-3, -1, 1, 2]) P('#e8dcb0', tx + k, ty - 30, 1, 2);
+    P('#fff4c0', tx - 1, ty - 45, 3, 2); // górny reflektor
+    P('#fff4c0', tx - 13, ty - 22, 4, 3); // dolne reflektory
+    P('#1a1410', tx + 9, ty - 22, 4, 3);
+    // pasy ostrzegawcze (skośne, wyblakłe)
+    for (let y = 0; y < 7; y++) for (let x = -16; x < 16; x++) P(((x + y) >> 2) % 2 ? '#a83a26' : '#c8bca0', tx + x, ty - 16 + y);
+    for (let k = 0; k < 18; k++) P('#5a4a30', tx - 16 + ((k * 7) % 32), ty - 16 + (k % 7)); // odpryski
+    P('#1a1612', tx - 16, ty - 9, 32, 3); // pomost
+    for (const bx of [-14, 10]) { P('#2a2622', tx + bx, ty - 8, 4, 4); P('#6a6660', tx + bx, ty - 8, 4, 1); } // zderzaki
+    P('#2a2622', tx - 1, ty - 7, 3, 3); // sprzęg
+    P('#0e0c0a', tx - 16, ty - 4, 32, 4);
+    glow(g, ox + tx, ty - 22, 36, 30, WARM, 0.35, { levels: 4, add: true });
   }
   // deski na prawej bramie
   for (let k = 0; k < 7; k++) {
@@ -217,31 +227,58 @@ export function paintDepot(g: Ctx2D, ox: number, r: R): { bulbs: [number, number
     P('#9a9a9a', x + w - 1, y);
   }
 
-  // szyld "PRZYSTAŃ" na desce nad środkową bramą, przekrzywiony, na jednym łańcuchu
+  // szyld "ZAJEZDNIA" na desce nad środkową bramą: przekrzywiony, na jednym łańcuchu, zniszczony -
+  // "E" odpadło (jaśniejszy ślad i gwoździe), "N" wisi na jednym gwoździu pod deską, prawy koniec deski
+  // odłamany razem z połową "A", farba odprysła, przez deskę biegnie pęknięcie
   const GL: Record<string, string[]> = {
-    P: ['111', '101', '111', '100', '100'], R: ['110', '101', '110', '101', '101'], Z: ['111', '001', '010', '100', '111'],
-    Y: ['101', '101', '010', '010', '010'], S: ['011', '100', '010', '001', '110'], T: ['111', '010', '010', '010', '010'],
-    A: ['010', '101', '111', '101', '101'], Ń: ['1001', '1101', '1011', '1001', '1001'],
+    Z: ['111', '001', '010', '100', '111'], A: ['010', '101', '111', '101', '101'], J: ['001', '001', '001', '101', '010'],
+    E: ['111', '100', '110', '100', '111'], D: ['110', '101', '101', '101', '110'], N: ['1001', '1101', '1011', '1001', '1001'],
+    I: ['1', '1', '1', '1', '1'],
   };
-  const word = 'PRZYSTAŃ';
+  const word = 'ZAJEZDNIA';
   const sw = [...word].reduce((a, ch) => a + GL[ch][0].length + 1, 1);
   const sx = cx - Math.floor(sw / 2), sy = base - GH - 14;
-  for (let x = -1; x <= sw; x++) {
-    const tilt = Math.round((x / sw) * 2);
-    P('#3a2618', sx + x, sy - 1 + tilt, 1, 9);
-    P('#5a3a22', sx + x, sy - 1 + tilt, 1, 1);
-  }
+  const tiltAt = (x: number): number => Math.round(((x - sx) / sw) * 2);
+  const cut = sw - 2; // odłamany koniec deski (poszarpana krawędź)
+  const edge = (y: number): number => cut + ((y * 5) % 3) - 1;
+  for (let x = -1; x <= sw; x++)
+    for (let y = -1; y < 8; y++) {
+      if (x > edge(y)) continue;
+      const crack = y === 3 + Math.round(Math.sin(x * 0.4) * 1.2) && x > 4 && x < sw - 12;
+      P(crack ? '#140c08' : y === -1 ? '#5a3a22' : y === 7 ? '#24160e' : '#3a2618', sx + x, sy + y + tiltAt(sx + x));
+    }
+  // odłamany kawałek leży pod bramą
+  P('#3a2618', sx + sw - 4, base - 2, 6, 2);
+  P('#e8dcb0', sx + sw - 2, base - 2, 1, 1);
   let lx = sx + 1;
-  for (const ch of word) {
-    const gl = GL[ch];
-    gl.forEach((row, yy) => [...row].forEach((b, xx) => {
-      if (b === '1') P(r() < 0.12 ? '#8a7a5a' : '#e8dcb0', lx + xx, sy + 1 + yy + Math.round(((lx + xx - sx) / sw) * 2));
-    }));
-    if (ch === 'Ń') P('#e8dcb0', lx + 2, sy - 1 + Math.round(((lx + 2 - sx) / sw) * 2));
-    lx += gl[0].length + 1;
-  }
-  L(sx + 1, sy - 1, sx + 6, eave + 6, '#5a5a5a'); // łańcuch (drugi zerwany)
-  L(sx + sw - 2, sy + 1, sx + sw, sy + 6, '#5a5a5a');
+  [...word].forEach((ch, i) => {
+    const gl = GL[ch], gw = gl[0].length;
+    if (i === 3) {
+      // odpadła litera: jaśniejsze, niezniszczone drewno w jej kształcie + dwa gwoździe
+      gl.forEach((row, yy) => [...row].forEach((bit, xx) => bit === '1' && P('#6a4a30', lx + xx, sy + 1 + yy + tiltAt(lx + xx))));
+      P('#9a9a9a', lx, sy + 1 + tiltAt(lx));
+      P('#9a9a9a', lx + 2, sy + 5 + tiltAt(lx + 2));
+    } else if (i === 6) {
+      // obsunęła się: wisi na jednym gwoździu (lewy górny róg), przekrzywiona, częściowo pod deską
+      const nx = lx, ny = sy + 4 + tiltAt(lx);
+      gl.forEach((row, yy) => [...row].forEach((bit, xx) => {
+        if (bit === '1') P('#d8cca0', nx + xx + Math.floor(yy / 2), ny + yy + Math.floor(xx * 0.6));
+      }));
+      P('#9a9a9a', nx, ny - 1);
+      P('#4e3424', lx + 1, sy + 1 + tiltAt(lx + 1), 3, 2); // jaśniejszy ślad po literze na desce
+    } else {
+      gl.forEach((row, yy) => [...row].forEach((bit, xx) => {
+        const x = lx + xx;
+        if (bit !== '1' || x - sx > edge(yy)) return; // połowa "A" odpadła z końcem deski
+        const chip = r() < 0.12;
+        P(chip ? '#6a5238' : '#e8dcb0', x, sy + 1 + yy + tiltAt(x));
+      }));
+    }
+    lx += gw + 1;
+  });
+  L(sx + 1, sy - 1, sx + 6, eave + 6, '#5a5a5a'); // łańcuch
+  L(sx + sw - 6, sy + 1, sx + sw - 4, sy + 7, '#5a5a5a'); // zerwany łańcuch zwisa
+  P('#5a5a5a', sx + sw - 3, sy + 8);
 
   // rura od piecyka wychodząca z dachu, krzywa, z daszkiem
   const px = cx + 62;
@@ -253,60 +290,106 @@ export function paintDepot(g: Ctx2D, ox: number, r: R): { bulbs: [number, number
   ivy(g, ox + x0 + HOLE, ox + x0 + 80, eave + 1, 18, r, '#16241a', '#2e4a2a');
 
   // ---------------------------------------------------------------- 5) mur z wraków i złomu
-  const wallTop = 176;
-  // przechylony tramwaj po lewej (wyblakły krem / czerwień, wybite okna, wygięty pantograf)
-  const tram = (tx: number, len: number, slope: number, burnt: boolean): void => {
+  // ---- zniszczony skład kolejowy przy zajezdni (zamiast muru po bokach):
+  // lewa strona: wykolejona lokomotywa spalinowa + przechylony wagon kryty; prawa: przewrócona cysterna + węglarka
+  const wheel = (x: number, y: number): void => {
+    for (let dy = -2; dy <= 1; dy++) P('#121010', x - (Math.abs(dy + 0.5) > 1 ? 1 : 2), y + dy, Math.abs(dy + 0.5) > 1 ? 3 : 5, 1);
+    P('#4a4440', x, y - 1);
+  };
+  /** Bryła przechylona: dla kolumny k wołamy col(k, x, góra, dół). */
+  const body = (x0b: number, len: number, slope: number, h: (k: number) => number, col: (k: number, x: number, top: number, bot: number) => void): ((k: number) => number) => {
+    const yo = (k: number): number => Math.round((k - len / 2) * slope);
     for (let k = 0; k < len; k++) {
-      const x = tx + k, y0 = Math.round(wallTop - 2 + k * slope);
-      const end = k < 3 || k > len - 4;
-      const roof = y0 + (end ? 2 : 0);
-      const hgt = 24 - (end ? 2 : 0);
-      for (let j = 0; j < hgt; j++) {
-        const y = roof + j;
-        let c: ColorIn;
-        if (burnt) c = j < 2 ? '#2a2420' : j < 11 ? ((k % 9 > 1 && j > 3 && j < 10) ? '#06060a' : '#1e1a18') : '#16120f';
-        else if (j < 2) c = '#5a5248';
-        else if (j < 11) c = (k % 9 > 1 && j > 3 && j < 10) ? ((k * 7 + j) % 11 === 0 ? '#6a7a9a' : '#0a0a10') : '#8a7a5a';
-        else if (j < 14) c = '#6a2a20';
-        else c = '#5a2a1e';
-        if (!burnt && Math.sin(k * 0.9 + j * 1.7) > 0.86) c = '#7a4a26'; // rdza
-        P(c, x, y);
-      }
-      if (!burnt && k % 5 === 0) P('#3a2a20', x, roof + 13, 1, 9); // drzwi / poszycie
-      P(burnt ? '#3a3a40' : '#a09888', x, roof, 1, 1); // blik księżyca na dachu
+      const bot = base - 5 + yo(k);
+      col(k, x0b + k, bot - h(k), bot);
     }
-    // pantograf
-    const mx = tx + Math.round(len / 2), my = Math.round(wallTop - 2 + (len / 2) * slope);
-    L(mx, my, mx - 5, my - 9, '#2a2420');
-    L(mx - 5, my - 9, mx + 6, my - 12, '#2a2420');
-    // graffiti
-    if (!burnt) for (let k = 0; k < 10; k++) P(k % 2 ? '#c04a8a' : '#6ad04a', tx + 6 + k * 2, Math.round(wallTop + 15 + (6 + k * 2) * slope + Math.sin(k) * 1.5), 2, 1);
+    return (k: number) => base - 5 + yo(k);
   };
-  tram(66, 52, 0.06, false);
-  tram(364, 50, -0.05, true);
-  // blachy, drzwi aut, opony - poszarpana linia muru między wrakami i halą
-  const scrap = (a: number, b: number): void => {
-    for (let x = a; x < b;) {
-      const w = 4 + Math.floor(r() * 8), h = 16 + Math.floor(r() * 10);
-      const c = rgbOf(['#3a3a36', '#4a3a2a', '#2e3438', '#3e2e22', '#44403a'][Math.floor(r() * 5)]);
-      for (let k = 0; k < w && x + k < b; k++) {
-        P((k % 3 === 0) ? mix(c, '#000000', 0.35) : c, x + k, base + 4 - h + (k === 0 ? 1 : 0), 1, h);
-        P(mix(c, MOON, 0.35), x + k, base + 4 - h, 1, 1);
-      }
-      if (r() < 0.3) { P('#7a3a1a', x + 1, base - h + 8, 2, 4); }
-      x += w;
+  // lokomotywa: kabina z lewej, maska z kratkami, żółty pas, rdza, wypalona maska, rozbita szyba
+  const LOCO = 8, LL = 58;
+  const locoBot = body(LOCO, LL, 0.07, (k) => (k < 14 ? 22 : 16) - (k === 0 || k === LL - 1 ? 1 : 0), (k, x, top, bot) => {
+    const cab = k < 14;
+    for (let y = top; y < bot; y++) {
+      const j = y - top, fromBot = bot - y;
+      let c: ColorIn = '#2e4434';
+      if (j === 0) c = mix('#4a5a4a', MOON, 0.4);
+      else if (fromBot === 5 || fromBot === 6) c = '#9a8a3a'; // żółty pas
+      else if (cab && j > 3 && j < 10 && k > 2 && k < 12) c = (k + j) % 9 === 0 ? '#5a6a8a' : '#0a0c10'; // okna kabiny
+      else if (!cab && j > 3 && j < 11 && k % 3 === 0) c = '#1a2a20'; // kratki maski
+      if (rusty(x, y)) c = hash(x, y) > 0.7 ? '#8a4a22' : '#6a3a1e'; // rdza
+      if (!cab && k > 34 && k < 50 && j < 9 && ((k + j) & 1) === 0) c = '#0e0c0a'; // wypalone
+      P(c, x, y);
     }
-    // drut kolczasty: zygzak z kolcami
-    for (let x = a; x < b; x++) {
-      const y = base + 4 - 28 + ((x % 6) < 3 ? (x % 3) : 3 - (x % 3));
-      P('#6a6a70', x, y);
-      if (x % 6 === 0) P('#8a8a90', x, y - 1);
+    P('#0e0c0a', x, bot, 1, 2); // rama
+  });
+  for (const k of [6, 14, LL - 14, LL - 6]) wheel(LOCO + k, locoBot(k) + 3);
+  P('#1a1612', LOCO + 24, locoBot(24) - 20, 3, 4); // komin wydechu
+  for (let k = 16; k < LL - 2; k += 2) P('#5a5a50', LOCO + k, locoBot(k) - 17, 1, 1); // poręcz (połamana)
+  L(LOCO + 40, locoBot(40) - 17, LOCO + 44, locoBot(40) - 23, '#5a5a50');
+  for (let k = 0; k < 8; k++) P(k % 2 ? '#c04a8a' : '#e8dcb0', LOCO + 18 + k * 2, locoBot(18 + k * 2) - 9 + (k % 3), 2, 1); // graffiti
+  // wagon kryty: deski, łukowy dach, uchylone drzwi, wypalona dziura z żebrami, drut kolczasty na dachu
+  const BOX = LOCO + LL + 2, BL = 52;
+  P('#1a1612', BOX - 2, locoBot(LL - 1) - 4, 2, 2); // sprzęg
+  const boxBot = body(BOX, BL, -0.09, () => 20, (k, x, top, bot) => {
+    for (let y = top; y < bot; y++) {
+      const j = y - top;
+      let c: ColorIn = k % 3 === 0 ? '#3a1a14' : '#5a2a1e';
+      if (j < 2) c = j === 0 ? mix('#4a3e38', MOON, 0.4) : '#3a3430';
+      if (k >= 20 && k < 32 && j > 2) c = k === 20 || k === 31 ? '#2a1610' : '#4a2218'; // drzwi przesuwne
+      if (k >= 32 && k < 35 && j > 2) c = '#06060a'; // szpara uchylonych drzwi
+      if (k > 38 && k < 47 && j > 4 && j < 13 && Math.sin(k * 1.9 + j * 1.3) > -0.6) c = k % 3 === 0 ? '#2a1a14' : '#06060a'; // dziura z żebrami
+      if (rusty(x, y, 0.15)) c = '#7a4a26';
+      P(c, x, y);
     }
-  };
-  scrap(10, 66);
-  scrap(414, 472);
+    P('#0e0c0a', x, bot, 1, 2);
+    if (k % 6 === 0) P('#6a6a70', x, top - 2); // drut kolczasty
+    P('#5a5a60', x, top - 1 - ((k % 6) < 3 ? 0 : 1));
+  });
+  for (const k of [5, 11, BL - 11, BL - 5]) wheel(BOX + k, boxBot(k) + 3);
+  for (const [k, j] of [[8, 9], [9, 9], [10, 9], [8, 11], [10, 11], [9, 10]] as const) P('#d8d0c0', BOX + k, boxBot(k) - 20 + j); // biały szablon na desce
+  // cysterna przewrócona kołami do góry, z wyciekiem
+  const TK = 362, TL = 52;
+  for (let k = 0; k < TL; k++) {
+    const end = Math.min(k, TL - 1 - k);
+    const inset = end === 0 ? 4 : end === 1 ? 2 : end === 2 ? 1 : 0;
+    for (let y = base - 17 + inset; y < base - inset; y++) {
+      const j = y - (base - 17);
+      let c: ColorIn = j < 3 ? mix('#2a2a30', MOON, 0.45) : j < 6 ? '#24242a' : j > 13 ? '#0c0c10' : '#18181c';
+      if (j >= 7 && j <= 9 && k > 6 && k < TL - 6) c = '#8a5a20'; // wyblakły pas ostrzegawczy
+      if (rusty(TK + k, y, 0.3)) c = hash(k, y) > 0.6 ? '#7a3e1c' : '#5a2e18';
+      P(c, TK + k, y);
+    }
+  }
+  P('#141418', TK + 4, base - 21, TL - 8, 3); // rama (u góry, bo do góry nogami)
+  for (const k of [6, 12, TL - 12, TL - 6]) wheel(TK + k, base - 23);
+  P('#18181c', TK + 22, base - 1, 8, 2); // właz wbity w ziemię
+  glow(g, ox + TK + 26, base + 3, 22, 4, '#7aff40', 0.35, { levels: 3, add: true }); // toksyczny wyciek
+  P('#3a6a1a', TK + 12, base + 2, 26, 1);
+  P('#6ad02a', TK + 18, base + 2, 8, 1);
+  // węglarka wykolejona, przechylona, węgiel wysypany na ziemię
+  const GD = TK + TL + 2, GLn = 470 - GD;
+  const gBot = body(GD, GLn, 0.1, () => 13, (k, x, top, bot) => {
+    for (let y = top; y < bot; y++) {
+      const j = y - top;
+      let c: ColorIn = k % 6 === 0 ? '#2a201c' : '#3e3028';
+      if (j === 0) c = mix('#5a4a40', MOON, 0.4);
+      if (rusty(x, y, 0.3)) c = '#6a3a1e';
+      P(c, x, y);
+    }
+    for (let j = 1; j < 3 + ((k * 7) % 3); j++) P(((k + j) % 3) ? '#0c0c0e' : '#2a2a30', x, top - j); // hałda węgla
+    P('#0e0c0a', x, bot, 1, 2);
+  });
+  for (const k of [5, 11, GLn - 11, GLn - 5]) wheel(GD + k, gBot(k) + 3);
+  for (let k = 0; k < 40; k++) P(r() < 0.6 ? '#0c0c0e' : '#2a2a30', GD - 6 + r() * 16, base + 3 - r() * (6 - Math.abs(k % 8 - 4)), 2, 1);
+  // szyny pod składem: jedna wyrwana i wygięta w górę
+  for (const [a2, b2] of [[4, 124], [358, 474]] as const) {
+    P('#4a4a50', a2, base + 2, b2 - a2, 1);
+    for (let x = a2; x < b2; x += 5) P('#2a1e16', x, base + 3, 3, 1); // podkłady
+  }
+  L(70, base + 2, 76, base - 8, '#6a6a70');
+  L(76, base - 8, 84, base - 12, '#6a6a70');
   // opony i beczki pod murem
-  for (const [x, y] of [[30, base + 4], [38, base + 4], [34, base - 2], [440, base + 4], [449, base + 4]] as const) {
+  for (const [x, y] of [[x0 - 4, base + 4], [x1 + 4, base + 4], [x1 + 12, base + 4]] as const) {
     P('#0e0c0c', x - 3, y - 6, 7, 6);
     P('#2a2626', x - 3, y - 6, 7, 1);
     P('#1e1a18', x - 1, y - 4, 3, 2);
@@ -418,5 +501,5 @@ export function paintDepot(g: Ctx2D, ox: number, r: R): { bulbs: [number, number
   for (let k = 0; k < 6; k++) bush(g, ox + 10 + r() * 460, base + 7, 2 + r() * 2, r, FOLIAGE.night, 1);
   for (let k = 0; k < 34; k++) grass(g, ox + r() * 480, base + 2 + r() * 6, 3, 2 + r() * 3, r, '#141a14', '#2a3a24', '#5a6a3a');
 
-  return { bulbs, sparks: [x0 + 58, gable(x0 + 58) + 1] };
+  return { bulbs, sparks: [x0 + 58, gable(x0 + 58) + 1], cat: [BOX + 14, boxBot(14) - 22] };
 }

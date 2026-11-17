@@ -709,7 +709,7 @@ export class IntroScene extends Phaser.Scene {
     });
     const far = new ParallaxLayer(this, 'intro_haven_far', 0.25, M, 0);
     // zajezdnia tramwajowa po zagładzie: ceglana hala z bramami na tory, mur z wraków, wieże z rur (fx/HavenArt.ts)
-    let depot: ReturnType<typeof paintDepot> = { bulbs: [], sparks: [0, 0] };
+    let depot: ReturnType<typeof paintDepot> = { bulbs: [], sparks: [0, 0], cat: [110, 176] };
     this.tex('intro_haven_fort', BASE_W + 2 * M, BASE_H, (g, w, h) => {
       const r = seeded(34);
       ground(g, w, h, 197, { crest: '#3a3430', body: '#1e1a18', deep: '#0a0a0a', amp: 1, freq: 0.02, seed: 12, debris: 0.45, rnd: r });
@@ -739,7 +739,7 @@ export class IntroScene extends Phaser.Scene {
       new Walker(this, 'hen', 330, 352, 203, 4.5, FAUNA_PAL.hen, 2),
       new Walker(this, 'hen', 356, 380, 203, 4.5, FAUNA_PAL.hen, 3),
     ];
-    const cat = this.add.image(0, 176, pixelFrames(this, 'fauna_cat', SPRITES.CAT, FAUNA_PAL.cat)[0]).setOrigin(0.5, 1).setDepth(1.2);
+    const cat = this.add.image(0, depot.cat[1], pixelFrames(this, 'fauna_cat', SPRITES.CAT, FAUNA_PAL.cat)[0]).setOrigin(0.5, 1).setDepth(1.2);
     const catKeys = pixelFrames(this, 'fauna_cat', SPRITES.CAT, FAUNA_PAL.cat);
     this.updaters.push((tq, dt) => {
       const t = tq / SEC;
@@ -756,7 +756,7 @@ export class IntroScene extends Phaser.Scene {
         c.offset = off;
         c.update(t, dt);
       }
-      cat.setX(Math.round(110 + off)).setTexture(catKeys[Math.floor(t * 1.5) % 4 === 0 ? 1 : 0]);
+      cat.setX(Math.round(depot.cat[0] + off)).setTexture(catKeys[Math.floor(t * 1.5) % 4 === 0 ? 1 : 0]);
       const fx = Math.round(-p * 0.5);
       bulbs.update(t, fort.dx);
       // spawanie: krótkie serie iskier co kilka sekund
