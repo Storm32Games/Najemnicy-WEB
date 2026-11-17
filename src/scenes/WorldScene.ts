@@ -3742,10 +3742,12 @@ export class WorldScene extends Phaser.Scene {
     this.aimFace(a, def);
     const x0 = a.sprite.x, y0 = a.sprite.y - 13;
     const x1 = d.sprite.x, y1 = d.sprite.y - 12;
-    g.lineStyle(1.5, col, 0.22).lineBetween(x0, y0, x1, y1);
-    g.lineStyle(0.5, col, 0.95).lineBetween(x0, y0, x1, y1);
-    g.fillStyle(col, 0.95).fillCircle(x1, y1, 1);
-    g.fillStyle(col, 0.3).fillCircle(x1, y1, 2.2);
+    // grubość w pikselach ekranu (1 px rdzenia przy każdej rozdzielczości), niezależnie od przybliżenia kamery
+    const px = 1 / this.cameras.main.zoom;
+    g.lineStyle(3 * px, col, 0.15).lineBetween(x0, y0, x1, y1);
+    g.lineStyle(px, col, 0.95).lineBetween(x0, y0, x1, y1);
+    g.fillStyle(col, 0.95).fillCircle(x1, y1, 2 * px);
+    g.fillStyle(col, 0.25).fillCircle(x1, y1, 5 * px);
     const dist = cheb(att, def);
     this.setCostLabel(String(dist), def, col);
     // etykieta w połowie linii, odsunięta prostopadle, żeby nie zasłaniała lasera ani postaci
