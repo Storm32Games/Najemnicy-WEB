@@ -524,7 +524,7 @@ export class WorldScene extends Phaser.Scene {
     this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
       const d = this.drag;
       this.drag = null;
-      if (d && d.btn === 2 && !d.moved && pointer.button === 2) this.cancelMode();
+      if (d && d.btn === 2 && !d.moved && pointer.button === 2 && !this.cancelMode()) this.turnToPointer();
     });
     this.input.on('wheel', (pointer: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
       if (this.overUi(pointer)) return;
@@ -1193,6 +1193,15 @@ export class WorldScene extends Phaser.Scene {
     // drobne przesunięcie fazy, żeby drużyna nie oddychała równo
     sprite.play({ key: `${name}_f_idle`, startFrame: Math.floor(hash2(pos.gx, pos.gy, 5) * 4) });
     return unit;
+  }
+
+  /** Wygląd najemnika po zmianie broni: arkusz z nową bronią (sprite PixelLab - wariant broni, osobna tekstura). */
+  private refreshLook(a: Actor): void {
+    const u = this.units.get(a);
+    if (!u || a.side !== 'pc' || !(this.job || spriteIdOf(a.ch))) return;
+    const tex = ensureUnit(this, u.name, unitLookOf(a.ch));
+    if (u.sprite.texture.key !== tex) u.sprite.setTexture(tex, 'f_idle0');
+    if (a.state === 'up') this.idle(u);
   }
 
   private unitOfCh(ch: Character): Unit | null {
@@ -2551,16 +2560,32 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /** Esc / PPM: anuluj tryb celowania, potem podmenu przedmiotów. */
-  private cancelMode(): void {
-    if (!this.actorNow()) return;
+  /** Anuluje tryb celowania / podmenu; false, gdy nie było czego anulować. */
+  private cancelMode(): boolean {
+    if (!this.actorNow()) return false;
     if (this.mode) this.mode = null;
     else if (this.sub) this.sub = null;
-    else return;
+    else return false;
     this.modeHint = null;
     this.hud.setHover(null);
     this.refreshActions();
     this.refreshOverlay();
     this.refreshPathPreview();
+    return true;
+  }
+
+  /** Prawy klik na polu (bez przeciągania): wybrana postać obraca się w stronę tego pola (tylko wygląd). */
+  private turnToPointer(): void {
+    const a = this.actorNow();
+    if (!a || this.hud.busy || !this.hud.canAct || this.hud.prompt) return;
+    const u = this.units.get(a);
+    if (!u || u.sprite.anims.currentAnim?.key.endsWith('_walk')) return;
+    const c = this.pointerCell();
+    if (!this.inMap(c.gx, c.gy)) return;
+    const d = { gx: c.gx - u.pos.gx, gy: c.gy - u.pos.gy };
+    if (!d.gx && !d.gy) return;
+    this.face(u, d);
+    this.idle(u);
   }
 
   private async onAction(id: string): Promise<void> {
@@ -2660,7 +2685,10 @@ export class WorldScene extends Phaser.Scene {
   private async itemClick(a: Actor, uid: string, cell: GridPos, who: Actor | null): Promise<void> {
     const inst = a.ch.inventory.find((i) => i.uid === uid);
     const c = inst ? this.combat.consumableOf(inst) : null;
-    if (!inst || !c) return this.cancelMode();
+    if (!inst || !c) {
+      this.cancelMode();
+      return;
+    }
     if (c.target === 'area') {
       if (!this.combat.areaCellOk(a, cell, c.range || 6)) return this.deny('Poza zasięgiem.');
       return this.combatAct((x) => this.combat.useItem(x, inst, null, cell));
@@ -2749,9 +2777,12 @@ export class WorldScene extends Phaser.Scene {
     if (!sel || !this.hud.canAct || !sel.ch.equipment.weapon2) return;
     if (this.hud.inCombat) {
       SoundManager.sfx('pickup');
-      return this.combatAct((a) => this.combat.swapWeapon(a));
+      await this.combatAct((a) => this.combat.swapWeapon(a));
+      this.refreshLook(sel);
+      return;
     }
     swapWeapons(sel.ch);
+    this.refreshLook(sel);
     this.hud.pushLog(`${sel.ch.name} dobywa: ${normWeapon(getWeapon(sel.ch)).name}.`);
     SoundManager.sfx('pickup');
     this.hud.notify('stats');
