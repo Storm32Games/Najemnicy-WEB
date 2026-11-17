@@ -6,6 +6,7 @@ import { pickOne, type Rng } from '../rules/dice.ts';
 import { allEnemyIds, allItems, enemyDef, isItemId } from '../rules/lookup.ts';
 import type { Biome } from '../tactical/mapgen.ts';
 import type { ObjectiveType } from '../tactical/mission.ts';
+import { foodLow, foodOf } from './food.ts';
 import { campaignPartyLevel, type CampaignState, type Contract, type FactionId, type Mood } from './state.ts';
 
 const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));
@@ -54,7 +55,8 @@ interface ContractTemplate {
   giver?: FactionId;
 }
 type SideType = Exclude<ObjectiveType, 'boss'>;
-export const SIDE_TYPES: readonly SideType[] = ['eliminate', 'retrieve', 'rescue', 'hunt', 'hack', 'liberate', 'purge', 'defend'];
+/** Zwykłe zlecenia poboczne (każde co najmniej raz na tablicy). Zaopatrzenie ('forage') dochodzi, gdy brakuje żywności. */
+export const SIDE_TYPES: readonly Exclude<SideType, 'forage'>[] = ['eliminate', 'retrieve', 'rescue', 'hunt', 'hack', 'liberate', 'purge', 'defend'];
 
 const TYPES: Readonly<Record<SideType, ContractTemplate>> = {
   eliminate: {
@@ -120,6 +122,16 @@ const TYPES: Readonly<Record<SideType, ContractTemplate>> = {
       'Kupcy omijają tę dzielnicę szerokim łukiem. Oczyśćcie ją z bestii, a szlak znów będzie bezpieczny.',
     ],
   },
+  forage: {
+    factions: ['beast', 'mutant', 'raider'], biomes: ['wastes', 'ruins', 'industrial'], moods: ['day', 'dusk', 'storm', 'toxic'], giver: 'survivors',
+    titles: ['Pusty spichrz', 'Głodne zimy', 'Konserwy z magazynu', 'Ziarno z silosu', 'Zapasy z dawnego marketu', 'Chleb dla Przystani', 'Wyprawa po prowiant'],
+    descs: [
+      'Spichrz w Przystani świeci pustkami, a dzieci już chodzą głodne. W starym magazynie leżą skrzynie z konserwami — przynieście, ile zdołacie.',
+      'Ocaleni muszą jeść. Zwiadowcy wypatrzyli nienaruszone zapasy w ruinach, ale okolica nie jest pusta. Zbierzcie żywność i wróćcie cało.',
+      'Za kilka dni zabraknie nam chleba. W silosach za miastem zostało ziarno — zabierzcie wszystkie worki, zanim zje je robactwo albo ktoś gorszy.',
+      'Karawana z żywnością przepadła na pustkowiach. Ładunek wciąż tam leży, rozrzucony między wrakami. Zbierzcie go dla Przystani.',
+    ],
+  },
   defend: {
     factions: ['raider', 'mutant', 'beast'], biomes: ['wastes', 'ruins'], moods: ['dusk', 'night', 'storm'], giver: 'survivors',
     titles: ['Obrona Przystani', 'Oblężenie przedpola', 'Noc długich noży', 'Ostatnia linia', 'Atak na posterunek'],
@@ -181,7 +193,8 @@ export function makeContract(
   const least = biomeUse ? Math.min(...T.biomes.map((b) => biomeUse[b] ?? 0)) : 0;
   const biome = pickOne(biomeUse ? T.biomes.filter((b) => (biomeUse[b] ?? 0) === least) : T.biomes, rng);
   if (biomeUse) biomeUse[biome] = (biomeUse[biome] ?? 0) + 1;
-  const MULT: Partial<Record<SideType, number>> = { rescue: 1.15, hack: 1.1, liberate: 1.2, purge: 1.15, defend: 1.25 };
+  // zaopatrzenie: główną nagrodą jest żywność dla Przystani, Złomu mniej
+  const MULT: Partial<Record<SideType, number>> = { rescue: 1.15, hack: 1.1, liberate: 1.2, purge: 1.15, defend: 1.25, forage: 0.7 };
   return {
     id: 'k' + (state?.day ?? 1) + '_' + rng().toString(36).slice(2, 7),
     title: pickTitle(T.titles, board, rng), giver: pickOne(GIVERS[faction], rng), faction, desc: pickOne(T.descs, rng),
@@ -190,7 +203,8 @@ export function makeContract(
       scrap: Math.round((35 + level * 32 + Math.floor(rng() * 30)) * (hard ? 1.2 : 1) * (MULT[type] ?? 1)),
       xp: 300 + level * 100 + (type === 'defend' || type === 'liberate' ? 100 : 0),
       items: techItem ? [techItem] : rng() < 0.4 && anyItem ? [anyItem] : [],
-      rep: { [faction]: 1 + (hard ? 1 : 0) + (type === 'liberate' || type === 'defend' ? 1 : 0) },
+      rep: { [faction]: 1 + (hard ? 1 : 0) + (type === 'liberate' || type === 'defend' || type === 'forage' ? 1 : 0) },
+      ...(type === 'forage' ? { food: 6 + Math.min(4, level) + Math.floor(rng() * 3) } : {}),
     },
     travelDays: 1 + (rng() < 0.25 ? 1 : 0),
   };
@@ -276,21 +290,41 @@ export function generateContracts(state: CampaignState, rng: Rng = Math.random):
   const use = boardUse([]);
   const n = boardTarget(rng);
   for (let i = 0; i < n; i++) out.push(makeContract(i < SIDE_TYPES.length ? SIDE_TYPES[i] : pickOne(SIDE_TYPES, rng), levelJitter(lvl, rng), state, rng, use));
+  addForage(state, out, rng, use);
   if (storyUnlocked(state)) out.unshift(cloneStory(state.story || 0, state));
   return out;
+}
+
+/** Szansa na zlecenie zaopatrzenia, gdy zapasy są skromne (ale jeszcze nie na wyczerpaniu). */
+const FORAGE_CHANCE = 0.3;
+/**
+ * Zaopatrzenie: gdy w Przystani brakuje żywności, na tablicy zawsze jest zlecenie zdobycia jedzenia
+ * (przy skromnych zapasach - czasem). Dokłada na początek listy pobocznych. MUTUJE `list`.
+ */
+function addForage(state: CampaignState, list: Contract[], rng: Rng, use: BoardUse): void {
+  if (list.some((c) => c.type === 'forage')) return;
+  const need = foodLow(state);
+  if (!need && !(foodOf(state) <= 7 && rng() < FORAGE_CHANCE)) return;
+  const lvl = campaignPartyLevel(state);
+  const c = makeContract('forage', clamp(lvl - (need ? 1 : 0), 1, 10), state, rng, use);
+  const at = list.findIndex((k) => !k.story);
+  list.splice(at < 0 ? list.length : at, 0, c);
 }
 
 /** Odświeża tablicę: usuwa `drop` losowych pobocznych, dopełnia do 10-11, dokłada fabularne. MUTUJE state.contracts. */
 export function refreshBoard(state: CampaignState, drop = 0, rng: Rng = Math.random): Contract[] {
   for (let i = 0; i < drop; i++) {
-    const side = state.contracts.filter((c) => !c.story);
+    const side = state.contracts.filter((c) => !c.story && c.type !== 'forage');
     if (side.length > 2) state.contracts.splice(state.contracts.indexOf(pickOne(side, rng)), 1);
   }
   if (storyUnlocked(state) && !state.contracts.some((c) => c.story)) state.contracts.unshift(cloneStory(state.story || 0, state));
   const lvl = campaignPartyLevel(state);
   const target = boardTarget(rng);
   const use = boardUse(state.contracts);
-  while (state.contracts.filter((c) => !c.story).length < target) {
+  // spichrz znów pełny: zaopatrzenie znika z tablicy
+  if (foodOf(state) > 12) state.contracts = state.contracts.filter((c) => c.type !== 'forage');
+  addForage(state, state.contracts, rng, use);
+  while (state.contracts.filter((c) => !c.story && c.type !== 'forage').length < target) {
     const missing = SIDE_TYPES.find((t) => !state.contracts.some((c) => c.type === t));
     state.contracts.push(makeContract(missing ?? pickOne(SIDE_TYPES, rng), clamp(lvl + (rng() < 0.25 ? 1 : 0), 1, 10), state, rng, use));
   }
@@ -307,7 +341,7 @@ export function difficulty(contractLevel: number, partyLevel: number): { label: 
 export const BIOME_NAMES: Readonly<Record<Biome, string>> = { ruins: 'Ruiny', wastes: 'Pustkowia', industrial: 'Strefa przemysłowa', bunker: 'Bunkier' };
 export const TYPE_NAMES: Readonly<Record<ObjectiveType, string>> = {
   eliminate: 'Eliminacja', retrieve: 'Odzyskanie', rescue: 'Ratunek', hunt: 'Polowanie', boss: 'Wódz',
-  hack: 'Włamanie', liberate: 'Wyzwolenie', purge: 'Oczyszczanie', defend: 'Obrona',
+  hack: 'Włamanie', liberate: 'Wyzwolenie', purge: 'Oczyszczanie', defend: 'Obrona', forage: 'Zaopatrzenie',
 };
 export const FACTION_NAMES: Readonly<Record<FactionId, string>> = { survivors: 'Ocaleni z Przystani', nomads: 'Nomadzi' };
 export const MOOD_NAMES: Readonly<Record<Mood, string>> = { day: 'dzień', dusk: 'zmierzch', night: 'noc', toxic: 'toksyczna mgła', storm: 'burza' };

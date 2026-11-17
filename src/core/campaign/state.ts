@@ -14,6 +14,8 @@ export interface ContractReward {
   xp: number;
   items: ItemId[];
   rep: Partial<Reputation>;
+  /** Dni zapasów żywności dla Przystani (zlecenie zaopatrzenia). */
+  food?: number;
 }
 
 export interface Contract {
@@ -39,6 +41,8 @@ export interface CampaignState {
   party: Character[];
   /** Waluta: Złom. */
   scrap: number;
+  /** Zapasy żywności Przystani w dniach (campaign/food.ts). */
+  food: number;
   day: number;
   rep: Reputation;
   /** Wspólna skrytka drużyny. */
@@ -54,7 +58,7 @@ export interface CampaignState {
 }
 
 export function freshState(): CampaignState {
-  return { version: 1, party: [], scrap: 120, day: 1, rep: { nomads: 0, survivors: 0 }, stash: [], contracts: [], completed: [], story: 0, flags: {}, log: [] };
+  return { version: 1, party: [], scrap: 120, food: 8, day: 1, rep: { nomads: 0, survivors: 0 }, stash: [], contracts: [], completed: [], story: 0, flags: {}, log: [] };
 }
 
 /** Średni poziom drużyny w kampanii (min. 1). */

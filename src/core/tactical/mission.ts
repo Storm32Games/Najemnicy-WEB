@@ -18,9 +18,11 @@ import { Combat, makeActor, type Actor, type ActorState, type CombatEnd, type En
 import { CellKind, cheb, dist, TacticalGrid, UNREACHABLE } from './grid.ts';
 import { generateMap, inEntryZone, type Biome, type FindKind, type FindSpawn, type TacticalMap } from './mapgen.ts';
 
-export type ObjectiveType = 'eliminate' | 'retrieve' | 'rescue' | 'hunt' | 'boss' | 'hack' | 'liberate' | 'purge' | 'defend';
-/** Cele, po których trzeba wrócić do strefy ewakuacji (przedmiot, jeniec, dane z serwera). */
-export const EXTRACTION_OBJECTIVES: readonly ObjectiveType[] = ['retrieve', 'rescue', 'hack'];
+export type ObjectiveType = 'eliminate' | 'retrieve' | 'rescue' | 'hunt' | 'boss' | 'hack' | 'liberate' | 'purge' | 'defend' | 'forage';
+/** Cele, po których trzeba wrócić do strefy ewakuacji (przedmiot, jeniec, dane z serwera, zapasy żywności). */
+export const EXTRACTION_OBJECTIVES: readonly ObjectiveType[] = ['retrieve', 'rescue', 'hack', 'forage'];
+/** Nazwa skrzyni z żywnością (zlecenie zaopatrzenia). */
+export const SUPPLY_NAME = 'Zapasy żywności';
 export type MissionOutcome = 'success' | 'fail' | 'retreat';
 
 /** Minimum danych zlecenia potrzebne misji (pełny typ: campaign/contracts.ts). */
@@ -73,6 +75,8 @@ export interface MissionResult {
   loot: ItemInstance[];
   scrap: number;
   casualties: string[];
+  /** Zaopatrzenie: zebrane skrzynie z żywnością (odwrót = żywność proporcjonalnie). */
+  supplies?: { got: number; total: number };
 }
 
 /** Postać w zapisie misji: najemnik jako indeks w drużynie kampanii (ten sam obiekt po wczytaniu), reszta z pełną kartą. */
@@ -104,6 +108,8 @@ export interface MissionSnapshot {
   objDevice: number;
   settlers: number[];
   nests: number[];
+  /** Skrzynie z żywnością (zaopatrzenie); brak w zapisach sprzed tego typu zlecenia. */
+  supplies?: number[];
   wave: number;
   nextWave: number;
   stage: number;
@@ -165,6 +171,8 @@ export class Mission {
   readonly settlers: MissionThing[] = [];
   /** Gniazda do zniszczenia (zlecenie 'purge'). */
   readonly nests: MissionThing[] = [];
+  /** Skrzynie z żywnością do zebrania (zlecenie 'forage'). */
+  readonly supplies: MissionThing[] = [];
   /** Obrona: indeks następnej fali i krok, od którego nadciąga. */
   wave = 0;
   nextWave = 3;
@@ -305,6 +313,19 @@ export class Mission {
         this.nests.push(th);
         this.things.push(th);
       }
+    } else if (this.objType === 'forage') {
+      // zapasy rozrzucone po terenie: pierwsza skrzynia na polu celu, reszta daleko od siebie
+      const n = 3 + (this.level >= 4 ? 1 : 0);
+      const far = this.map.maxD * 0.35;
+      for (let i = 0; i < n; i++) {
+        const c = (i === 0 && oc && this.cellOk(oc) ? { gx: oc.gx, gy: oc.gy } : null) ??
+          this.pickCell((r) => r.d >= far && this.supplies.every((x) => cheb(x, r) >= 6)) ??
+          this.pickCell((r) => r.d >= 6 && this.supplies.every((x) => cheb(x, r) >= 3));
+        if (!c) break;
+        const th: MissionThing = { kind: 'item', gx: c.gx, gy: c.gy, done: false, name: SUPPLY_NAME, itemId: 'canned_food', objective: true };
+        this.supplies.push(th);
+        this.things.push(th);
+      }
     }
 
     return target;
@@ -337,6 +358,7 @@ export class Mission {
       objDevice: ti(this.objDevice),
       settlers: this.settlers.map(ti),
       nests: this.nests.map(ti),
+      supplies: this.supplies.map(ti),
       wave: this.wave,
       nextWave: this.nextWave,
       stage: this.stage,
@@ -384,6 +406,7 @@ export class Mission {
     this.objDevice = thing(s.objDevice);
     for (const i of s.settlers) if (thing(i)) this.settlers.push(thing(i)!);
     for (const i of s.nests) if (thing(i)) this.nests.push(thing(i)!);
+    for (const i of s.supplies ?? []) if (thing(i)) this.supplies.push(thing(i)!);
     this.wave = s.wave;
     this.nextWave = s.nextWave;
     this.stage = s.stage;
@@ -848,6 +871,17 @@ export class Mission {
     // PF2e: Otwieranie zamka i hakowanie = 2 akcje (wyważenie 1), reszta interakcji 1
     const cost = (th.kind === 'door' && skill !== 'athletics') || th.kind === 'device' ? 2 : 1;
     if (this.mode === 'combat' && !this.combat.spendActions(a, cost)) return false;
+    if (th.kind === 'item' && th.objective) {
+      // zapasy żywności idą do spichrza Przystani (nagroda zlecenia), nie do plecaka
+      th.done = true;
+      const got = this.supplies.filter((x) => x.done).length;
+      const all = got === this.supplies.length;
+      this.log(`${a.ch.name} zabiera: ${th.name} (${got}/${this.supplies.length}).${all ? ' Wszystko zebrane — czas wracać do strefy ewakuacji!' : ''}`, 'good');
+      this.emit({ kind: 'interact', thing: th, by: a });
+      this.emitObjectives();
+      this.checkObjective();
+      return true;
+    }
     if (th.kind === 'item') {
       th.done = true;
       this.stage = Math.max(this.stage, 1);
@@ -1062,6 +1096,8 @@ export class Mission {
         return this.allDead() && this.settlers.every((x) => x.freed);
       case 'purge':
         return this.allDead() && this.nests.every((x) => x.done);
+      case 'forage':
+        return this.supplies.length > 0 && this.supplies.every((x) => x.done);
       default:
         return this.stage >= 1;
     }
@@ -1114,6 +1150,10 @@ export class Mission {
       const waves = this.groups.length;
       const cleared = this.groups.filter((g) => g.actors.every((e) => e.state === 'dead')).length;
       L.push({ text: `Odeprzyj fale napastników (${cleared}/${waves})`, done: alive === 0 });
+    } else if (t === 'forage') {
+      const got = this.supplies.filter((x) => x.done).length;
+      L.push({ text: `Zbierz zapasy żywności (${got}/${this.supplies.length})`, done: got === this.supplies.length });
+      L.push({ text: 'Wróć z zapasami do strefy ewakuacji', done: false, go: this.stage >= 1 });
     } else if (t === 'retrieve') {
       L.push({ text: `Odzyskaj: ${this.itemThing?.name ?? 'cel'}`, done: this.stage >= 1 });
       L.push({ text: 'Wróć do strefy ewakuacji', done: false, go: this.stage >= 1 });
@@ -1160,6 +1200,7 @@ export class Mission {
       if (result !== 'fail') endEncounter(a.ch);
     }
     this.result = { contractId: this.contract.id, result, xp, loot: this.loot.slice(), scrap: this.scrap, casualties };
+    if (this.objType === 'forage') this.result.supplies = { got: this.supplies.filter((x) => x.done).length, total: this.supplies.length };
     this.emit({ kind: 'finish', result: this.result });
     return this.result;
   }

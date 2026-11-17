@@ -8,6 +8,7 @@ import { getStat } from '../rules/stats.ts';
 import { skillCheck } from '../rules/turn.ts';
 import type { Character } from '../rules/types.ts';
 import { rollItem } from './contracts.ts';
+import { consumeFood } from './food.ts';
 import { EVENTS, type EventChoice, type EventOutcome, type TravelEvent } from './events.ts';
 import type { CampaignState, Contract, FactionId } from './state.ts';
 
@@ -84,6 +85,7 @@ export function resolveEventChoice(state: CampaignState, contract: Pick<Contract
   }
   if (outcome.days) {
     state.day = Math.max(1, state.day + outcome.days);
+    if (outcome.days > 0) for (const t of consumeFood(state, outcome.days, rng).notes) effects.push({ text: t, tone: 'bad' });
     effects.push({ text: outcome.days > 0 ? `Strata czasu: +${outcome.days} d.` : 'Zyskany czas: −1 d.', tone: outcome.days > 0 ? 'bad' : 'good' });
   }
   if (outcome.hp && alive.length) {

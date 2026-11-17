@@ -6,6 +6,7 @@ import { addToStack } from '../rules/equipment.ts';
 import { allItems, itemDef } from '../rules/lookup.ts';
 import type { Character, ItemInstance } from '../rules/types.ts';
 import { refreshBoard } from './contracts.ts';
+import { consumeFood, type FoodReport } from './food.ts';
 import type { CampaignState } from './state.ts';
 
 /** Rabat u Nomadów: 2% za punkt reputacji (od -20% do 25%). */
@@ -68,9 +69,11 @@ export function healAtClinic(state: CampaignState, c: Character): boolean {
   return true;
 }
 
-/** Odpoczynek: długi odpoczynek całej drużyny, następny dzień, odświeżenie tablicy zleceń. */
-export function restDay(state: CampaignState): void {
+/** Odpoczynek: długi odpoczynek całej drużyny, następny dzień (Przystań zjada dzień zapasów), odświeżenie tablicy zleceń. */
+export function restDay(state: CampaignState): FoodReport {
   for (const c of state.party) longRest(c);
   state.day++;
+  const food = consumeFood(state, 1);
   refreshBoard(state, 2);
+  return food;
 }

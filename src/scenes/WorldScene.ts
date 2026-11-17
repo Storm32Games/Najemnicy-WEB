@@ -26,7 +26,7 @@ import { TurnPhase } from '../core/TurnManager';
 import { MAX_ACTION_POINTS } from '../core/TurnState';
 import {
   ArtBook, BIOME_STYLE, type DecalType, FLOOR_SPILL, paintAO, paintBlend, paintBlobShadow, paintBlock, paintCursor, paintDecal, paintEdge, paintFlames,
-  paintExtractPost, paintFloor, paintGlow, paintLootCrate, paintLootCrateOpen, paintNest, paintObjective, paintPathDot, paintProp, paintSparkle, paintText,
+  paintExtractPost, paintFloor, paintGlow, paintLootCrate, paintLootCrateOpen, paintNest, paintObjective, paintSupplies, paintPathDot, paintProp, paintSparkle, paintText,
   paintVignette, paintWall,
 } from './iso/IsoArt';
 import { PixelCanvas, hash2, rng } from './iso/Pixel';
@@ -418,10 +418,11 @@ export class WorldScene extends Phaser.Scene {
         ch.nameAcc = p.acc;
         return ch;
       });
-      // demo: ?type=retrieve|rescue|hunt|eliminate|hack|liberate|purge|defend
+      // demo: ?type=retrieve|rescue|hunt|eliminate|hack|liberate|purge|defend|forage
       const titles = {
         eliminate: 'Oczyść teren', retrieve: 'Odzyskaj ładunek', rescue: 'Uwolnij jeńca', hunt: 'Polowanie',
         hack: 'Włamanie do serwera', liberate: 'Uwolnić osadę Nomadów', purge: 'Oczyścić dzielnicę', defend: 'Obrona Przystani',
+        forage: 'Pusty spichrz',
       } as const;
       const tp = params.get('type') ?? '';
       const type: keyof typeof titles = tp in titles ? (tp as keyof typeof titles) : 'eliminate';
@@ -537,7 +538,7 @@ export class WorldScene extends Phaser.Scene {
     this.scene.launch('UIScene', { hud: this.hud });
     this.refreshActions();
     if (resume) this.hud.pushLog(`Wczytano zapis misji: ${this.job?.title ?? 'Zlecenie'}.`, 'amber');
-    else this.hud.pushLog(this.job ? `Zlecenie: ${this.job.title}. ${this.job.desc}` : 'Zlecenie: oczyść teren z szabrowników.', 'amber');
+    else this.hud.pushLog(this.job ? `Zlecenie: ${this.job.title}. ${this.job.desc}` : `Zlecenie: ${this.mission.contract.title ?? 'oczyść teren z szabrowników'}.`, 'amber');
     if (!resume && this.mission.objType === 'defend') this.hud.pushLog('Zajmijcie pozycje — za chwilę nadciągnie pierwsza fala napastników.', 'bad');
     this.hud.pushLog('Klikaj pola, by się poruszać; klik na skrzynię / cel = interakcja. Wrogowie czyhają w ciemności. [H] sterowanie.');
     this.updateFoes();
@@ -938,6 +939,19 @@ export class WorldScene extends Phaser.Scene {
 
   /** Serwer (zostaje po zhakowaniu, gaśnie światło) albo gniazdo mutantów (znika po zniszczeniu). */
   private addThingMark(th: MissionThing): void {
+    if (th.objective && th.kind === 'item') {
+      // zapasy żywności (zaopatrzenie): skrzynia z workami, ciepłe światło i błysk do zebrania
+      if (th.done) return;
+      const { gx, gy } = th;
+      const v = (gx * 7 + gy * 13) % 3;
+      const info = this.art.get(`mission_supplies_${v}`, () => paintSupplies(v));
+      const img = this.place(gx, gy, info.key, info.ax, info.ay, objDepth(gx, gy, L_PROP));
+      this.addLight(gx, gy, 0xffc060, 0.5, 0.5, 8, 0.8, 'blink', 0.4, objDepth(gx, gy, L_FX), 'fx_halo');
+      const light = this.glows[this.glows.length - 1];
+      const sparkle = this.addSparkle(gx, gy, -10) as unknown as Phaser.GameObjects.Image;
+      this.thingMarks.set(th, { imgs: [img, sparkle], light });
+      return;
+    }
     if (!th.objective || (th.kind !== 'device' && th.kind !== 'nest') || (th.kind === 'nest' && th.done)) return;
     const { gx, gy } = th;
     const v = (gx * 7 + gy * 13) % 3;
@@ -960,7 +974,7 @@ export class WorldScene extends Phaser.Scene {
       this.glows.splice(this.glows.indexOf(m.light), 1);
       m.light = null;
     }
-    if (th.kind === 'nest') {
+    if (th.kind === 'nest' || th.kind === 'item') {
       for (const img of m.imgs) this.dropCellImg(this.idx(th.gx, th.gy), img);
       this.thingMarks.delete(th);
     }
@@ -2831,7 +2845,13 @@ export class WorldScene extends Phaser.Scene {
 
   /** Zabrany cel / uwolniony jeniec (Oldgame/src/scenes/mission.js:520-528). */
   private onInteract(th: MissionThing, by: Actor): void {
-    if (th.kind === 'item') {
+    if (th.kind === 'item' && th.objective) {
+      SoundManager.sfx('pickup');
+      const got = this.mission.supplies.filter((x) => x.done).length, all = this.mission.supplies.length;
+      this.floatAbove(by, `Zapasy ${got}/${all}`, C_LOOT);
+      this.clearThingMark(th);
+      if (got === all) this.hud.showBanner('ZAPASY ZEBRANE', 'amber', 'Wróć do strefy ewakuacji');
+    } else if (th.kind === 'item') {
       SoundManager.sfx('pickup');
       this.floatAbove(by, 'Zdobyto!', C_LOOT);
       this.hud.showBanner('CEL ZDOBYTY', 'amber', 'Wróć do strefy ewakuacji');

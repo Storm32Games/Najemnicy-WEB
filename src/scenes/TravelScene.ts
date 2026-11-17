@@ -33,7 +33,7 @@ import { modalOpen, openWindow } from './ui/Widgets';
 
 const TYPE_COLOR: Record<ObjectiveType, number> = {
   eliminate: 0xc43d2f, retrieve: 0x7fc46a, rescue: 0x4aa8ff, hunt: 0xf2a93b, boss: 0xff30ff,
-  hack: 0x40e0d0, liberate: 0xe8d070, purge: 0x9c6ad8, defend: 0xe0e0e0,
+  hack: 0x40e0d0, liberate: 0xe8d070, purge: 0x9c6ad8, defend: 0xe0e0e0, forage: 0xd8a050,
 };
 const TONE = { good: PAL.good, amber: PAL.amber, bad: PAL.bad } as const;
 const Q = (v: number): number => Math.round(v * WQ);
