@@ -8,6 +8,7 @@ import {
   LOCKS, DEVICES, lockState, deviceState, pickLock, hackDevice, lockForLevel, hasLockpick, fmtDamage,
   generateMap, Mission, runAiTurn, CellKind, MAP_W, MAP_H,
   freshState, generateContracts, applyMissionResult, EVENTS, resolveEventChoice, shopStock, buy, sellPrice, restDay,
+  makeContract, refreshBoard, consumeFood, addFood, FOOD_LOW, FOOD_MAX,
 } from '../src/core/index.ts';
 import { HudState, backpackRows, conditionChips, equipmentRows, hpTone, plural, statPairs } from '../src/core/HudState.ts';
 import { itemTargeting, previewStrike } from '../src/core/SkirmishRules.ts';
@@ -733,6 +734,68 @@ function simulateMission(contract: Contract, party: Character[], seed: number): 
   ok(Array.from(m2.grid.cells).every((v, i) => v === m1.grid.cells[i]), 'restore: grid cells');
   m1.mode = 'combat';
   ok(m1.snapshot() === null, 'snapshot: none during combat');
+}
+
+// ---------- zapasy żywności i zlecenie zaopatrzenia
+{
+  const st = freshState();
+  st.party = [createCharacter({ name: 'A', classId: 'soldier', ancestry: 'human' }), createCharacter({ name: 'B', classId: 'medic', ancestry: 'human' })];
+  ok(st.food > FOOD_LOW, 'food: start above low threshold');
+  st.food = 10;
+  const noLoss = (): number => 0.99;
+  const r1 = consumeFood(st, 3, noLoss);
+  ok(st.food === 7 && r1.used === 3 && r1.hungry === 0, 'food: 1 day of supplies per day');
+  st.food = 1;
+  const rep0 = st.rep.survivors;
+  const r2 = consumeFood(st, 3, noLoss);
+  ok(st.food === 0 && r2.hungry === 2 && st.rep.survivors === rep0 - 2, 'food: hunger lowers survivors reputation');
+  ok(addFood(st, 99) === FOOD_MAX && st.food === FOOD_MAX, 'food: granary capped');
+  // brak żywności = zaopatrzenie zawsze na tablicy, pełny spichrz = brak
+  st.food = 2;
+  st.contracts = generateContracts(st, makeRng(5));
+  const fc = st.contracts.find((c) => c.type === 'forage');
+  ok(!!fc && (fc.reward.food ?? 0) > 0 && fc.faction === 'survivors', 'forage: contract on board when food is low, with food reward');
+  st.food = FOOD_MAX;
+  refreshBoard(st, 3, makeRng(6));
+  ok(!st.contracts.some((c) => c.type === 'forage'), 'forage: removed from board when granary is full');
+  for (let i = 0; i < 20; i++) {
+    st.food = 3;
+    const b = generateContracts(st, makeRng(100 + i));
+    if (b.filter((c) => c.type === 'forage').length !== 1) ok(false, 'forage: exactly one on low food board');
+  }
+  // misja zaopatrzenia: skrzynie z żywnością, zebranie wszystkich = cel, potem ewakuacja
+  const c = makeContract('forage', 1, st, makeRng(8));
+  const m = new Mission(c, st.party, makeRng(9));
+  ok(m.supplies.length >= 3 && m.supplies.every((x) => x.kind === 'item' && x.objective && !m.inExtraction(x)), 'forage mission: supply caches placed outside entry zone');
+  ok(m.needsExtraction(), 'forage mission: needs extraction');
+  const pc = m.pcs[0];
+  for (const [i, sup] of m.supplies.entries()) {
+    const adj = m.interactCell(pc, sup) ?? { gx: sup.gx, gy: sup.gy + 1 };
+    pc.gx = adj.gx;
+    pc.gy = adj.gy;
+    ok(m.interact(pc, sup), `forage mission: pick up supplies ${i + 1}`);
+    ok(m.objectiveDone() === (i === m.supplies.length - 1), `forage mission: objective only after all supplies (${i + 1})`);
+  }
+  ok(!m.loot.some((x) => x.id === 'canned_food'), 'forage mission: supplies go to the granary, not the backpack');
+  const snap = JSON.parse(JSON.stringify(m.snapshot()));
+  const m2 = new Mission(c, st.party, makeRng(9), snap);
+  ok(m2.supplies.length === m.supplies.length && m2.supplies.every((x) => x.done), 'forage mission: save/restore supplies');
+  const res = m.finish('success');
+  ok(res.supplies?.got === m.supplies.length, 'forage mission: result counts supplies');
+  st.contracts.push(c);
+  st.food = 2;
+  const sum = applyMissionResult(st, res, c);
+  ok(sum.food === c.reward.food && st.food === 2 + c.reward.food! - c.travelDays, 'forage debrief: food added, travel days eaten');
+  // odwrót z częścią zapasów: żywność proporcjonalnie
+  const st2 = freshState();
+  st2.party = st.party;
+  st2.food = 1;
+  const part = applyMissionResult(st2, { contractId: c.id, result: 'retreat', xp: 0, loot: [], scrap: 0, casualties: [], supplies: { got: 1, total: 3 } }, { ...c, reward: { ...c.reward, food: 9 } });
+  ok(part.food === 3, 'forage debrief: retreat gives food per collected cache');
+  const st3 = freshState();
+  st3.food = 5;
+  restDay(st3);
+  ok(st3.food <= 4 && st3.day === 2, 'rest day eats supplies');
 }
 
 console.log(`\n${checks} checks, ${fails} failures`);

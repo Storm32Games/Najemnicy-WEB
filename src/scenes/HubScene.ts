@@ -3,6 +3,7 @@ import { MOODS, backdrop } from './fx/Backdrops';
 import { glow } from './fx/Painter';
 import type { PixelText } from './ui/BitmapFont';
 import { SoundManager } from '../audio/SoundManager';
+import { FOOD_LOW, foodLow, foodOf, foodStatus } from '../core/campaign/food';
 import { BIOME_NAMES, FACTION_NAMES, MOOD_NAMES, TYPE_NAMES, difficulty, refreshBoard, storyHint } from '../core/campaign/contracts';
 import { buy, buyPrice, healAtClinic, healCost, nomadDiscount, restDay, sell, sellPrice, shopStock } from '../core/campaign/economy';
 import { campaign, hireCost, hireRecruit, recruitCharacter, tavernRecruits } from '../core/campaign/session';
@@ -32,6 +33,7 @@ const OBJECTIVE: Record<string, string> = {
   eliminate: 'Wyeliminuj wszystkich wrogów.', rescue: 'Odnajdź i uratuj jeńca.', hunt: 'Wytrop i zabij cel polowania.', boss: 'Zabij Kostuchę.',
   hack: 'Włam się do serwera i wróć z danymi.', liberate: 'Pokonaj szabrowników i uwolnij osadników.',
   purge: 'Zniszcz gniazda i wybij zmutowaną faunę.', defend: 'Odeprzyj kolejne fale napastników.',
+  forage: 'Zbierz rozrzucone zapasy żywności i wróć z nimi do strefy ewakuacji.',
 };
 
 const WX = 6, WY = 22, WW = 376, WH = 242; // okno zakładki
@@ -208,12 +210,19 @@ export class HubScene extends Phaser.Scene {
     put('', 'PRZYSTAŃ', PAL.amber);
     put('Złom: ', String(st.scrap), PAL.amber);
     put('Dzień: ', String(st.day));
+    const fx = x;
+    const fs = foodStatus(st);
+    put('Żywność: ', `${foodOf(st)} dn.`, TONE[fs.tone]);
+    T.add(this.tip.attach(this.add.rectangle(fx, 2, x - fx - 10, 13, 0, 0).setOrigin(0).setInteractive(), () =>
+      `Zapasy Przystani: ${fs.label}. Ocaleni zjadają 1 dzień zapasów dziennie.\nGdy zapasy spadną do ${FOOD_LOW} dn., na tablicy pojawia się zlecenie zaopatrzenia; głód obniża reputację u Ocalonych.`));
     const nx = x;
     put('Nomadzi: ', fmtRep(st.rep.nomads), st.rep.nomads >= 0 ? PAL.good : PAL.bad);
     // podpowiedź jak w Oldgame/src/scenes/hub.js:88
     T.add(this.tip.attach(this.add.rectangle(nx, 2, x - nx - 10, 13, 0, 0).setOrigin(0).setInteractive(), () => `Rabat u handlarzy: ${Math.round(nomadDiscount(st) * 100)}%`));
     put('Ocaleni: ', fmtRep(st.rep.survivors), st.rep.survivors >= 0 ? PAL.good : PAL.bad);
-    this.L(BASE_W - 8, 5, `Poziom drużyny: ${campaignPartyLevel(st)} · Ukończone: ${st.completed.length}`, { size: 6, color: PAL.dim }, T).setOrigin(1, 0);
+    // prawy napis skrócony, gdy nie mieści się obok wartości (doszła Żywność)
+    const right = this.L(BASE_W - 8, 5, `Poziom drużyny: ${campaignPartyLevel(st)} · Ukończone: ${st.completed.length}`, { size: 6, color: PAL.dim }, T).setOrigin(1, 0);
+    if (BASE_W - 8 - right.displayWidth < x - 8) right.setText(`Poz. ${campaignPartyLevel(st)} · Ukończ. ${st.completed.length}`);
   }
 
   private drawMenu(): void {
@@ -311,7 +320,7 @@ export class HubScene extends Phaser.Scene {
       const diff = label(this, w - 4, 18, d.label, { color: TONE[d.tone] }).setOrigin(1, 0);
       row.add([
         bg,
-        label(this, 4, 1, (c.story ? '★ ' : '') + c.title, { color: c.story ? PAL.amber : PAL.text, maxW: w - 12 - reward.width }),
+        label(this, 4, 1, (c.story ? '★ ' : c.type === 'forage' && foodLow(st) ? '! ' : '') + c.title, { color: c.story ? PAL.amber : c.type === 'forage' && foodLow(st) ? PAL.bad : PAL.text, maxW: w - 12 - reward.width }),
         reward,
         label(this, 4, 10, `${c.giver} · ${FACTION_NAMES[c.faction]}`, { color: PAL.dim, maxW: w - 8 }),
         label(this, 4, 18, `${TYPE_NAMES[c.type]} · poz. ${c.level} · ${BIOME_NAMES[c.biome]}`, { color: PAL.toxic, maxW: w - 12 - diff.width }),
@@ -350,7 +359,7 @@ export class HubScene extends Phaser.Scene {
     y += 2;
     const rw = cur.reward;
     const rep = (Object.entries(rw.rep) as [string, number][]).map(([f, v]) => `${f === 'nomads' ? 'Nomadzi' : 'Ocaleni'} ${fmtRep(v)}`);
-    row('Nagroda', [`${rw.scrap} Złomu`, `${rw.xp} PD`, ...rw.items.map((id) => itemDef(id)?.name ?? id), ...rep].join(' · '), PAL.amber);
+    row('Nagroda', [...(rw.food ? [`${rw.food} dn. żywności`] : []), `${rw.scrap} Złomu`, `${rw.xp} PD`, ...rw.items.map((id) => itemDef(id)?.name ?? id), ...rep].join(' · '), PAL.amber);
     this.body.add(button(this, DX + DW - 120, BH - 26, 'Przyjmij zlecenie ▶', () => void this.accept(cur), { primary: true, w: 120, h: 20, size: 8 }).box);
   }
 
@@ -448,9 +457,9 @@ export class HubScene extends Phaser.Scene {
     this.L(SX + 5, 50, 'ODPOCZYNEK', { size: 7, bold: true, color: PAL.amber });
     this.L(SX + 5, 62, 'Prześpij noc w kwaterze: pełne PW i zdolności, ale mija dzień — tablica zleceń się zmienia.', { size: 6, wrap: 112, lineSpacing: 2 });
     this.body.add(button(this, SX + 5, 110, 'Odpocznij (następny dzień)', () => {
-      restDay(st);
+      const food = restDay(st);
       SoundManager.sfx('heal');
-      toast(this, `Dzień ${st.day}. Wypoczęci.`, 'good');
+      toast(this, `Dzień ${st.day}. Wypoczęci.${food.notes.length ? ' ' + food.notes.join(' ') : ''}`, food.notes.length ? 'bad' : 'good');
       this.redraw();
     }, { w: 112, h: 15, size: 6 }).box);
   }

@@ -6,6 +6,7 @@ import { addToStack } from '../rules/equipment.ts';
 import type { Character } from '../rules/types.ts';
 import type { MissionResult } from '../tactical/mission.ts';
 import { refreshBoard } from './contracts.ts';
+import { addFood, consumeFood } from './food.ts';
 import type { CampaignState, Contract, FactionId } from './state.ts';
 
 export interface MemberProgress {
@@ -32,6 +33,10 @@ export interface DebriefSummary {
   win: boolean;
   /** Cała drużyna zginęła. */
   tpk: boolean;
+  /** Dni zapasów żywności dostarczone do Przystani (zaopatrzenie). */
+  food: number;
+  /** Komunikaty o zapasach po upływie dni podróży (strata, głód). */
+  foodNotes: string[];
 }
 
 /**
@@ -45,7 +50,7 @@ export function applyMissionResult(state: CampaignState, mission: MissionResult,
   const retreat = result === 'retreat';
   const mult = ok ? 1 : retreat ? 0.5 : 0;
   const rw = c?.reward ?? { scrap: 0, xp: 0, items: [], rep: {} };
-  const out: DebriefSummary = { contract: c, result, scrap: 0, stolen: 0, xp: 0, items: [], rep: {}, fallen: [], members: [], story: false, win: false, tpk: false };
+  const out: DebriefSummary = { contract: c, result, scrap: 0, stolen: 0, xp: 0, items: [], rep: {}, fallen: [], members: [], story: false, win: false, tpk: false, food: 0, foodNotes: [] };
 
   // polegli
   const names = new Set(mission.casualties);
@@ -79,6 +84,13 @@ export function applyMissionResult(state: CampaignState, mission: MissionResult,
       addToStack(state.stash, newItem(id));
       out.items.push(id);
     }
+  }
+
+  // żywność dla Przystani: pełna przy sukcesie, przy odwrocie za każdą zebraną skrzynię zapasów
+  if (rw.food && result !== 'fail') {
+    const sup = mission.supplies;
+    const part = ok ? 1 : sup && sup.total ? sup.got / sup.total : 0;
+    out.food = addFood(state, rw.food * part);
   }
 
   // reputacja
@@ -118,7 +130,9 @@ export function applyMissionResult(state: CampaignState, mission: MissionResult,
       if (c.type === 'boss' || /kostucha/i.test(c.title)) out.win = true;
     }
   }
-  state.day += c?.travelDays ?? 1;
+  const days = c?.travelDays ?? 1;
+  state.day += days;
+  out.foodNotes = consumeFood(state, days).notes;
   state.log.push({ day: state.day, text: `${c?.title ?? 'Zlecenie'}: ${result}` });
   if (out.win) state.flags.victory = true;
   refreshBoard(state, ok ? 1 : 0);

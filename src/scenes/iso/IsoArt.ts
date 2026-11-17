@@ -921,6 +921,24 @@ export function paintObjective(): { pc: PixelCanvas; ax: number; ay: number } {
   });
 }
 
+/** Zapasy żywności (zlecenie zaopatrzenia): drewniana skrzynia z konserwami i worki z ziarnem; `v` = wariant ułożenia. */
+export function paintSupplies(v = 0): { pc: PixelCanvas; ax: number; ay: number } {
+  return propCanvas((pen) => {
+    castShadow(pen, 0.2, 0.25, 0.82, 0.78, 0.2);
+    const wood = ramp(0x7a5230, 5, 0.4), sack = ramp(0xc8b080, 5, 0.35), tin = ramp(0xb04030, 4, 0.35);
+    // skrzynia
+    pen.shadedBox(0.22, 0.28, 0.58, 0.6, 0, 7, wood);
+    pen.shadedBox(0.22, 0.28, 0.58, 0.6, 7, 8, ramp(0x9a6c40, 4, 0.3));
+    // puszki na wieku
+    pen.shadedBox(0.3, 0.34, 0.38, 0.42, 8, 10, tin);
+    pen.shadedBox(0.42, 0.36, 0.5, 0.44, 8, 10, ramp(0x40709a, 4, 0.35));
+    // worki
+    if (v !== 1) pen.shadedBox(0.6, 0.3, 0.8, 0.52, 0, 6, sack);
+    if (v !== 2) pen.shadedBox(0.5, 0.6, 0.76, 0.8, 0, 5, sack);
+    if (v === 2) pen.shadedBox(0.6, 0.32, 0.78, 0.5, 0, 9, ramp(0xa89060, 5, 0.35));
+  });
+}
+
 // ------------------------------------------------------------------ kalkomanie (łamią siatkę)
 
 export type DecalType = 'scorch' | 'oil' | 'stain' | 'sand' | 'blood' | 'moss';
