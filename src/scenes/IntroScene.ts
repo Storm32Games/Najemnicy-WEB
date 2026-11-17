@@ -4,10 +4,11 @@ import { SoundManager } from '../audio/SoundManager';
 import { RECRUITS } from '../core/data/recruits';
 import { INTRO_SLIDES, type IntroSlideId } from '../core/data/story';
 import {
-  IntRng, IntroAction, IntroFlow, Q12, TickClock, ang, angQ8, icos, idiv, isin, lerpQ12, progressQ12, secToQ8, wave,
+  IntRng, IntroAction, IntroFlow, Q12, TickClock, angQ8, idiv, lerpQ12, progressQ12, secToQ8, wave,
 } from '../core/frontend';
 import { NukeBlast, paintRuinStreet } from './fx/NukeArt';
-import { addUnit, raiderLook, unitLookOf } from './iso/UnitLooks';
+import { addUnit, enemyUnitLook, unitLookOf } from './iso/UnitLooks';
+import { dirOfVector } from './iso/SpriteUnits';
 import {
   BASE_H, BASE_W, type Ctx2D, Motes, PAL, Typewriter, type UiButton, button, campfire, canvasTexture, enter, goto, label, panel, seeded, tiledImage,
 } from './ui/Kit';
@@ -30,6 +31,14 @@ type Updater = (tq: number, dt: number) => void;
 const SEC = secToQ8(1);
 /** round(a / b) dla b > 0, na liczbach całkowitych. */
 const rdiv = (a: number, b: number): number => (a >= 0 ? idiv(a + (b >> 1), b) : -idiv(-a + (b >> 1), b));
+
+/** Szabrownicy na planszy 3: szablon wroga z gotową postacią PixelLab i położenie względem ogniska (piksele projektowe). */
+const RAIDERS: readonly (readonly [string, number, number])[] = [
+  ['raider_chief', 6, -8], ['raider_sniper', -112, 2], ['raider_gunner', -70, -4], ['raider_thug', -48, 12],
+  ['raider_psycho', 58, 12], ['raider_burner', 96, -2],
+];
+/** Mieszkańcy Przystani na planszy 5 (id rekrutów). */
+const HAVEN = ['plesn', 'iskra', 'mur', 'zgrzyt', 'szept'] as const;
 
 const D_FLASH = 20;
 const D_UI = 30;
@@ -407,10 +416,16 @@ export class IntroScene extends Phaser.Scene {
     const pole = this.add.rectangle(150, 98, 2, 86, 0x2a1810).setOrigin(0).setDepth(2);
     const poleRim = this.add.rectangle(151, 98, 1, 86, 0xc06a3a).setOrigin(0).setDepth(2);
     const fire = campfire(this, FX, FY, 2.2, 4);
-    const members = [0, 1, 2, 3, 4].map((i) => {
-      const a = idiv(i * 256, 5) + ang(0.3), c = icos(a), sn = isin(a);
-      const s = addUnit(this, FX + ((c * 62) >> 14), FY + 4 + ((sn * 11) >> 14), `intro_raider${i}`, raiderLook(i), 'idle', 2);
-      s.setFlipX(c > 0).setDepth(sn < 0 ? 3 : 5);
+    // szabrownicy z PixelLab (src/assets/units/raider_*/): Kostucha za ogniskiem, banda półkolem wokół
+    const members = RAIDERS.map(([tid, dx, dy], i) => {
+      const x = FX + dx, y = FY + dy;
+      const name = `intro_${tid}`;
+      const s = addUnit(this, x, y, name, enemyUnitLook(tid), 'idle', 2);
+      // twarzą do ogniska, lekko ku widzowi (obrót z 8 kierunków; bez sprite'a: przód odbity w lewo)
+      const dir = dirOfVector(-dx, 16);
+      if (this.anims.exists(`${name}_${dir}_idle`)) s.play({ key: `${name}_${dir}_idle`, startFrame: i % 4 });
+      else s.setFlipX(dx > 0);
+      s.setDepth(dy < 4 ? 3 : 5);
       return s;
     });
     const shadows = members.map((m) => this.add.ellipse(m.x + (m.x - FX) * 0.25, m.y + 1, 22, 4, 0x000000, 0.45).setDepth(2.5));
@@ -663,10 +678,10 @@ export class IntroScene extends Phaser.Scene {
     const beams = this.add.graphics().setDepth(1.5).setBlendMode(Phaser.BlendModes.ADD);
     const lamps = [78, 402].map((x) => this.add.ellipse(x, 107, 40, 26, 0xffe0a0, 0.25).setDepth(1.6).setBlendMode(Phaser.BlendModes.ADD));
     const fires = [campfire(this, 150, 206, 1.2, 4), campfire(this, 338, 208, 1.2, 4)];
-    const classes = ['medic', 'techie', 'soldier', 'scavenger', 'scout'];
-    const cloths = ['#8a7a60', '#5a6a70', '#4a5a40', '#6a4a40', '#7a6a50'];
-    classes.forEach((classId, i) => {
-      const s = addUnit(this, 196 + i * 22, 210 + (i % 2) * 5, `intro_haven${i}`, unitLookOf({ classId, look: { cloth: cloths[i], accent: '#c9a23a', skin: '#b08060', hair: '#2a2018', hairStyle: i } }), 'idle', 1.5);
+    // mieszkańcy Przystani: postacie PixelLab rekrutów spoza pierwszej czwórki (ta jest na ostatniej planszy)
+    HAVEN.forEach((id, i) => {
+      const r = RECRUITS.find((k) => k.id === id)!;
+      const s = addUnit(this, 176 + i * 32, 197 + (i % 2) * 4, `rec_${r.id}`, unitLookOf(r), 'idle', 1.5);
       s.setDepth(5 + (i % 2)).setFlipX(i > 2).setTint(0xd8c8b8);
     });
     const smoke = new Motes(this, 46, { x: 150, y: 70, w: 18, h: 50 }, 0x8a8a98, 4, -10, 5, 0.45, 1.2);
