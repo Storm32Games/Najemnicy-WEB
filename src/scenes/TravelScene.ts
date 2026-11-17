@@ -87,7 +87,14 @@ interface MapLabel {
   id?: string;
   /** Połowa szerokości napisu (liczona przy pierwszym użyciu). */
   hw?: number;
+  /** Napis zlecenia: czy był widoczny w poprzedniej klatce i na którym piętrze (przesunięcie w górę), żeby nie migał. */
+  shown?: boolean;
+  lift?: number;
+  stem?: Phaser.GameObjects.Rectangle;
 }
+
+/** Piętra napisów zleceń: gdy napis zasłania inny, wędruje wyżej nad flagę (zamiast znikać). */
+const LABEL_LIFTS = [0, 23, 46, 69] as const;
 
 /** Zmutowana bestia krążąca po mapie regionu - pozycja w świecie (Q8), ekran liczony z rzutu z wysokością. */
 interface Beast {
@@ -277,7 +284,10 @@ export class TravelScene extends Phaser.Scene {
       const bg = this.add.rectangle(0, -21, w, 21, 0x14100c, 0.9).setOrigin(0.5, 0).setStrokeStyle(1, col).setInteractive({ useHandCursor: true });
       const strip = this.add.rectangle(-w / 2, -21, 3, 21, col).setOrigin(0, 0);
       bg.on('pointerup', () => this.clickSelect(c));
-      this.labels.push({ box: this.add.container(0, 0, [bg, strip, t1, t2]).setDepth(D_LABEL), wx: p.x + 3, wy: p.y - 16, id: c.id });
+      // nóżka do flagi, gdy napis jest podniesiony o piętro (kolizja z innym napisem)
+      const stem = this.add.rectangle(0, 0, 1, 1, col, 0.8).setOrigin(0.5, 0).setVisible(false);
+      // ukryty do pierwszego rozmieszczenia (updateCamera), inaczej przez klatkę stałby w rogu ekranu
+      this.labels.push({ box: this.add.container(0, 0, [stem, bg, strip, t1, t2]).setDepth(D_LABEL).setVisible(false), wx: p.x + 3, wy: p.y - 16, id: c.id, stem });
     }
 
     this.top = this.add.container(0, 0).setDepth(D_PANEL);
@@ -292,6 +302,7 @@ export class TravelScene extends Phaser.Scene {
     this.select(this.job, true, false);
 
     this.setupInput();
+    this.updateCamera(0);
     SoundManager.music('wastes');
     SoundManager.ambience('wind');
     if (this.job && this.autoDepart) {
@@ -417,10 +428,12 @@ export class TravelScene extends Phaser.Scene {
     const listBottom = LIST_Y + 18 + this.all.length * (this.rowH() + 2);
     // napisy zleceń nie nachodzą na siebie: wybrane zlecenie pierwsze, kolejne kolidujące są chowane (flaga zostaje)
     const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
-    const order = [...this.labels].sort((a, b) => Number(b.id === this.job?.id) - Number(a.id === this.job?.id));
+    // kolejność: wybrane zlecenie, potem napisy widoczne w poprzedniej klatce (stabilny układ, bez migania), reszta
+    const rank = (l: MapLabel): number => (l.id === this.job?.id ? 2 : l.shown ? 1 : 0);
+    const order = [...this.labels].sort((a, b) => rank(b) - rank(a));
     for (const l of order) {
       let x = BASE_W / 2 + (l.wx - c.x) * c.z;
-      const y = BASE_H / 2 + (l.wy - c.y) * c.z;
+      let y = BASE_H / 2 + (l.wy - c.y) * c.z;
       if (l.id) x = Phaser.Math.Clamp(x, 40, BASE_W - 40);
       // lista zleceń (lewy górny róg) nie zasłania napisów: odsuwamy je w prawo od panelu
       // (napisy sektorów pod panelem po prostu chowamy - na dużej mapie przesunięte lądowałyby w innym sektorze)
@@ -435,10 +448,23 @@ export class TravelScene extends Phaser.Scene {
       let show = vis;
       if (vis && l.id) {
         const hw = (l.hw ??= l.box.getBounds().width / 2);
-        const r = { x0: x - hw, y0: y - 21, x1: x + hw, y1: y };
-        show = sel || !placed.some((o) => r.x0 < o.x1 && r.x1 > o.x0 && r.y0 < o.y1 && r.y1 > o.y0);
-        if (show) placed.push(r);
+        // napis kolidujący z już ustawionym podnosimy o piętro (najpierw piętro z poprzedniej klatki); chowany dopiero,
+        // gdy żadne piętro nie jest wolne (flaga zostaje i da się ją kliknąć)
+        const lifts = [l.lift ?? 0, ...LABEL_LIFTS.filter((d) => d !== (l.lift ?? 0))];
+        show = false;
+        for (const d of sel ? [0] : lifts) {
+          const r = { x0: x - hw - 1, y0: y - d - 22, x1: x + hw + 1, y1: y - d + 1 };
+          if (r.y0 < 16 && d > 0) continue;
+          if (!sel && placed.some((o) => r.x0 < o.x1 && r.x1 > o.x0 && r.y0 < o.y1 && r.y1 > o.y0)) continue;
+          placed.push(r);
+          l.lift = d;
+          y -= d;
+          show = true;
+          break;
+        }
       }
+      if (l.id) l.shown = show;
+      if (l.stem) l.stem.setVisible(show && !!l.lift).setSize(1, l.lift ?? 1);
       l.box.setPosition(Math.round(x), Math.round(y)).setVisible(show);
       if (l.id) l.box.setAlpha(travel ? (sel ? 1 : 0.3) : this.job && !sel ? 0.8 : 1).setDepth(sel ? D_LABEL + 1 : D_LABEL);
     }
