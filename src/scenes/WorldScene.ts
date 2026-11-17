@@ -2583,18 +2583,24 @@ export class WorldScene extends Phaser.Scene {
     return true;
   }
 
-  /** Prawy klik na polu (bez przeciągania): wybrana postać obraca się w stronę tego pola (tylko wygląd). */
+  /**
+   * Prawy klik na polu (bez przeciągania): wybrana postać obraca się w stronę tego pola (tylko wygląd). W eksploracji
+   * z ruchem całej drużyny (hud.groupMove) obracają się wszyscy stojący najemnicy - każdy w stronę klikniętego pola.
+   */
   private turnToPointer(): void {
     const a = this.actorNow();
     if (!a || this.hud.busy || !this.hud.canAct || this.hud.prompt) return;
-    const u = this.units.get(a);
-    if (!u || u.sprite.anims.currentAnim?.key.endsWith('_walk')) return;
     const c = this.pointerCell();
     if (!this.inMap(c.gx, c.gy)) return;
-    const d = { gx: c.gx - u.pos.gx, gy: c.gy - u.pos.gy };
-    if (!d.gx && !d.gy) return;
-    this.face(u, d);
-    this.idle(u);
+    const team = !this.hud.inCombat && this.hud.groupMove ? this.mission.pcs.filter((p) => p.state === 'up') : [a];
+    for (const p of team) {
+      const u = this.units.get(p);
+      if (!u || u.sprite.anims.currentAnim?.key.endsWith('_walk')) continue;
+      const d = { gx: c.gx - u.pos.gx, gy: c.gy - u.pos.gy };
+      if (!d.gx && !d.gy) continue;
+      this.face(u, d);
+      this.idle(u);
+    }
   }
 
   private async onAction(id: string): Promise<void> {
@@ -2786,8 +2792,12 @@ export class WorldScene extends Phaser.Scene {
     if (!sel || !this.hud.canAct || !sel.ch.equipment.weapon2) return;
     if (this.hud.inCombat) {
       SoundManager.sfx('pickup');
-      await this.combatAct((a) => this.combat.swapWeapon(a));
-      this.refreshLook(sel);
+      // nowy wygląd od razu po zmianie (nie po turze wrogów, gdy zmiana zużyła ostatnią akcję) i dla postaci w turze
+      await this.combatAct((a) => {
+        const out = this.combat.swapWeapon(a);
+        if (out.ok) this.refreshLook(a);
+        return out;
+      });
       return;
     }
     swapWeapons(sel.ch);
