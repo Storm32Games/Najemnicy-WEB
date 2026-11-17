@@ -168,8 +168,11 @@ function poseFrame(s: Src, pose: Pose, front: boolean): PixelCanvas {
   // wypad / odrzut całej postaci, pochylenie, oddech tułowia i głowa (piksele projektowe -> piksele obrazu)
   const shiftX = (pose.lunge + pose.dx) * PX;
   const lean = pose.lean * PX + (pose.kneel ? PX : 0);
-  const bob = pose.bob * PX;
-  const hbob = pose.hbob * PX;
+  // spoczynek: oddech o 1 piksel obrazu (pół piksela projektowego), głowa razem z tułowiem - pełne piksele projektowe
+  // i osobny ruch głowy wyglądały na obrazie 64x64 jak przesadne sapanie
+  const idle = pose.anim === 'idle';
+  const bob = idle ? Math.sign(pose.bob) : pose.bob * PX;
+  const hbob = idle ? 0 : pose.hbob * PX;
   // nogi: [bliższa przesunięcie, uniesienie, dalsza przesunięcie, uniesienie] (UnitArt.WALK_LEGS); przy leżeniu bez kroku
   const legs = lying ? null : pose.legs.some((v) => v !== 0) ? pose.legs : null;
   // bliższa noga: przodem (patrzy w prawo-w dół) po lewej stronie obrazu, tyłem (w prawo-w górę) po prawej
@@ -309,6 +312,13 @@ function glow(pc: PixelCanvas, y: number, cast: number): void {
   pc.set(FOOT_X, y - 3, 0xffffff);
 }
 
+/**
+ * Spoczynek sprite'ów: dwie pozy (wyprostowany / tułów o piksel niżej), wolny rytm oddechu. Zastępuje ANIMS.idle
+ * (5 póz po ~0.3 s, pomyślanych dla klatek 24x32), także w 8 kierunkach mapy regionu. Pętla ma 4 klatki, bo sceny
+ * rozsynchronizowują postacie losową klatką startową 0..3.
+ */
+const SPRITE_IDLE = { poses: [0, 1], frames: [0, 1, 0, 1], durs: [1500, 1300, 1400, 1200] } as const;
+
 const FRAME_ALIASES: Record<string, string> = { attack: 'attack2', hurt: 'hurt0' };
 const SHEET_COLS = 17;
 
@@ -426,6 +436,7 @@ export function paintSpriteSheet(scene: Phaser.Scene, id: string): UnitSheet & {
     const src = restOf(dir);
     const own = facing !== 'f' && facing !== 'b';
     if (!own) for (const name of names) cells.push({ name: `${facing}_${name}`, pc: poseFrame(src, poses.get(name)!, facing === 'f') });
+    if (!own) anims.push({ suffix: `${facing}_idle`, frames: SPRITE_IDLE.frames.map((i) => `${facing}_idle${i}`), durs: [...SPRITE_IDLE.durs], loop: true });
     // paski PixelLab
     const strips = new Map<StripAnim, Src[] | null>();
     for (const u of STRIP_USES) {
@@ -457,9 +468,8 @@ export function paintSpriteSheet(scene: Phaser.Scene, id: string): UnitSheet & {
   for (const dir of SPRITE_DIRS) {
     const src = restOf(dir);
     const front = dir.startsWith('south') || dir === 'east';
-    idleDef.poses.forEach((p) => cells.push({ name: `d_${dir}_idle${p.i}`, pc: poseFrame(src, p, front) }));
-    const seq = idleDef.seq ?? idleDef.poses.map((_, i) => i);
-    anims.push({ suffix: `${dir}_idle`, frames: seq.map((i) => `d_${dir}_idle${i}`), durs: idleDef.durs.slice(0, seq.length), loop: true });
+    for (const i of SPRITE_IDLE.poses) cells.push({ name: `d_${dir}_idle${i}`, pc: poseFrame(src, idleDef.poses[i], front) });
+    anims.push({ suffix: `${dir}_idle`, frames: SPRITE_IDLE.frames.map((i) => `d_${dir}_idle${i}`), durs: [...SPRITE_IDLE.durs], loop: true });
     const fr = stripFrames(scene, id, 'walk', dir);
     if (fr && fr.length) {
       fr.forEach((f, k) => cells.push({ name: `d_${dir}_walk${k}`, pc: stripCell(src, fr[0], f, false) }));
