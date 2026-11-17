@@ -13,11 +13,12 @@ import {
   BASE_H, BASE_W, type Ctx2D, Motes, PAL, Typewriter, type UiButton, button, campfire, canvasTexture, enter, goto, label, panel, seeded, tiledImage,
 } from './ui/Kit';
 import { MOODS, backdrop } from './fx/Backdrops';
+import { paintDepot } from './fx/HavenArt';
 import {
-  Circlers, FAUNA_PAL, FOLIAGE, SPRITES, Tumbleweed, Walker, burntTree, bush, cactus, dryShrub, glowShrooms, grass, ivy, leafyTree, pixelFrames, skeleton,
+  Circlers, FAUNA_PAL, FOLIAGE, SPRITES, Tumbleweed, Walker, burntTree, bush, cactus, dryShrub, glowShrooms, grass, leafyTree, pixelFrames, skeleton,
 } from './fx/Nature';
 import {
-  Birds, DriftLayer, deadTree, LightRays, streaks, ParallaxLayer, clouds, css, ditherGradient, glow, ground, haze, line, mix, poly, rimLight, ruins, stars, sun, vignette,
+  Birds, DriftLayer, deadTree, LightRays, streaks, Windows, ParallaxLayer, clouds, css, ditherGradient, glow, ground, haze, line, poly, rimLight, ruins, stars, sun, vignette,
 } from './fx/Painter';
 
 // Wprowadzenie do świata (port Oldgame/src/scenes/intro.js): 6 animowanych plansz + narracja pisana "na maszynie".
@@ -707,83 +708,19 @@ export class IntroScene extends Phaser.Scene {
       haze(g, 0, 110, w, 40, '#3a3450', 0.05, 0.5);
     });
     const far = new ParallaxLayer(this, 'intro_haven_far', 0.25, M, 0);
-    // twierdza: hala z łukowym dachem z blachy, okna z poświatą, brama, mur z blach i cegieł, wieże
+    // zajezdnia tramwajowa po zagładzie: ceglana hala z bramami na tory, mur z wraków, wieże z rur (fx/HavenArt.ts)
+    let depot: ReturnType<typeof paintDepot> = { bulbs: [], sparks: [0, 0] };
     this.tex('intro_haven_fort', BASE_W + 2 * M, BASE_H, (g, w, h) => {
-      const ox = M, r = seeded(34);
-      ground(g, w, h, 196, { crest: '#4a3a30', body: '#241c18', deep: '#0c0a0a', amp: 2, freq: 0.02, seed: 12, debris: 0.3, rnd: r });
-      // hala: dach łukowy z żebrami
-      for (let x = -108; x <= 108; x++) {
-        const top = Math.round(150 - 34 * Math.sqrt(1 - (x / 108) ** 2));
-        const lit = x > 40 ? 0.15 : x < -60 ? -0.2 : 0;
-        g.fillStyle = css(mix('#4a3a34', x > 0 ? '#8a7060' : '#1e1818', Math.abs(lit) * 2 + 0.1));
-        g.fillRect(ox + 240 + x, top, 1, 151 - top);
-        // blacha falista: pary żeber jasne / ciemne, rdzawe łaty, rząd nitów na wiązaniach
-        const rib = (x + 108) % 6;
-        if (rib === 0) { g.fillStyle = css(mix('#2a2220', '#4a3a34', 0.2)); g.fillRect(ox + 240 + x, top, 1, 151 - top); }
-        if (rib === 1) { g.fillStyle = css(mix('#7a6a5a', x > 0 ? '#a08a70' : '#4a3e36', 0.5)); g.fillRect(ox + 240 + x, top + 1, 1, 150 - top); }
-        if (r() < 0.04) { g.fillStyle = '#6a3a22'; g.fillRect(ox + 240 + x, top + 3 + Math.floor(r() * (146 - top)), 1, 2 + Math.floor(r() * 5)); }
-        for (const yy of [130, 142]) if (yy > top + 2 && (x + 108) % 6 === 3) { g.fillStyle = '#1a1614'; g.fillRect(ox + 240 + x, yy, 1, 1); }
-        g.fillStyle = '#8a7a6a';
-        g.fillRect(ox + 240 + x, top, 1, 1);
-      }
-      g.fillStyle = '#3a3532';
-      g.fillRect(ox + 132, 150, 216, 46);
-      for (let x = 132; x < 348; x += 12) { g.fillStyle = '#2a2624'; g.fillRect(ox + x, 150, 1, 46); }
-      g.fillStyle = '#5a5048';
-      g.fillRect(ox + 132, 150, 216, 1);
-      // okna (wnęki + ciepłe światło + szprosy)
-      for (let i = 0; i < 9; i++) if (i !== 4) {
-        const x = ox + 142 + i * 22;
-        glow(g, x + 5, 167, 12, 10, '#ffb050', 0.3, { levels: 3 });
-        g.fillStyle = '#1a1210'; g.fillRect(x - 1, 159, 12, 16);
-        g.fillStyle = '#ffc860'; g.fillRect(x, 160, 10, 14);
-        g.fillStyle = '#fff0b0'; g.fillRect(x + 1, 161, 3, 5);
-        g.fillStyle = '#5a3a20'; g.fillRect(x + 4, 160, 1, 14); g.fillRect(x, 166, 10, 1);
-      }
-      // komin
-      g.fillStyle = '#2a2420'; g.fillRect(ox + 150, 118, 8, 22);
-      g.fillStyle = '#4a3e36'; g.fillRect(ox + 150, 118, 8, 1);
-      // brama hali z blaskiem
-      glow(g, ox + 240, 182, 40, 22, '#ffa040', 0.5, { levels: 5 });
-      g.fillStyle = '#ffa040'; g.fillRect(ox + 226, 164, 28, 32);
-      g.fillStyle = '#ffd890'; g.fillRect(ox + 232, 170, 16, 26);
-      // mur: blachy, cegły, blanki, brama
-      for (let x = 60; x < 420; x += 1) {
-        const plate = Math.floor((x - 60) / 14) % 3;
-        g.fillStyle = plate === 0 ? '#3a342e' : plate === 1 ? '#332e2a' : '#403830';
-        g.fillRect(ox + x, 178, 1, 24);
-      }
-      for (let y = 182; y < 202; y += 4) for (let x = 60 + ((y / 4) % 2) * 4; x < 420; x += 8) { g.fillStyle = '#28231f'; g.fillRect(ox + x, y, 1, 1); }
-      for (let x = 60; x < 420; x += 10) { g.fillStyle = '#2a2622'; g.fillRect(ox + x, 174, 6, 4); g.fillStyle = '#5a5048'; g.fillRect(ox + x, 174, 6, 1); }
-      g.fillStyle = '#5a5048'; g.fillRect(ox + 60, 178, 360, 1);
-      g.fillStyle = '#120e0c'; g.fillRect(ox + 222, 182, 36, 20);
-      glow(g, ox + 240, 196, 30, 10, '#ffa850', 0.45, { levels: 4 });
-      // chorągwie na murze
-      for (const x of [110, 196, 284, 370]) {
-        g.fillStyle = '#7a1e18'; g.fillRect(ox + x, 180, 6, 12);
-        g.fillStyle = '#c9a23a'; g.fillRect(ox + x + 2, 183, 2, 4);
-        g.fillStyle = '#4a120e'; g.fillRect(ox + x, 191, 2, 2); g.fillRect(ox + x + 4, 191, 2, 2);
-      }
-      // wieże strażnicze z kratownicą
-      for (const x of [78, 402]) {
-        g.fillStyle = '#26221e'; g.fillRect(ox + x - 12, 118, 24, 84);
-        for (let y = 124; y < 200; y += 10) { line(g, ox + x - 11, y, ox + x + 11, y + 9, '#1a1714'); line(g, ox + x + 11, y, ox + x - 11, y + 9, '#1a1714'); }
-        g.fillStyle = '#3a3530'; g.fillRect(ox + x - 15, 112, 30, 6);
-        g.fillStyle = '#5a5048'; g.fillRect(ox + x - 15, 112, 30, 1);
-        g.fillStyle = '#2a2420'; g.fillRect(ox + x - 13, 100, 2, 12); g.fillRect(ox + x + 11, 100, 2, 12); g.fillRect(ox + x - 15, 98, 30, 3);
-        g.fillStyle = '#fff0a0'; g.fillRect(ox + x - 4, 104, 8, 6);
-      }
-      // drzewa zza muru (sad Przystani), bluszcz na murze i wieżach, krzaki i trawa przed murem
-      for (const [x, hh] of [[100, 34], [120, 26], [362, 30], [384, 36]] as const) leafyTree(g, ox + x, 178, hh, r, { ...FOLIAGE.night, lit: '#4a5a3a', hi: '#8a8a4a' }, 1);
-      ivy(g, ox + 60, ox + 120, 179, 14, r, '#1a2a1a', '#3a5a2a');
-      ivy(g, ox + 330, ox + 400, 179, 12, r, '#1a2a1a', '#3a5a2a');
-      ivy(g, ox + 66, ox + 74, 119, 30, r, '#1a2a1a', '#3a5a2a');
-      for (let k = 0; k < 8; k++) bush(g, ox + 20 + r() * 440, 202, 2 + r() * 3, r, FOLIAGE.night, 1);
-      for (let k = 0; k < 30; k++) grass(g, ox + r() * 480, 198 + r() * 6, 3, 2 + r() * 3, r, '#141a14', '#2a3a24', '#5a6a3a');
-      rimLight(g, ox + 240, 190, '#ffb060', 200, 0.6, 1);
+      const r = seeded(34);
+      ground(g, w, h, 197, { crest: '#3a3430', body: '#1e1a18', deep: '#0a0a0a', amp: 1, freq: 0.02, seed: 12, debris: 0.45, rnd: r });
+      depot = paintDepot(g, M, r);
+      rimLight(g, M + 240, 192, '#ffb060', 210, 0.55, 1);
       vignette(g, w, h, '#000004', 0.55, 0.5);
     });
     const fort = new ParallaxLayer(this, 'intro_haven_fort', 0.5, M, 1);
+    // migające żarówki girland i iskry spawania na dachu (ktoś łata wyrwę)
+    const bulbs = new Windows(this, depot.bulbs, 0xfff0a0, 1.1, 77);
+    const weld = this.add.graphics().setDepth(1.3).setBlendMode(Phaser.BlendModes.ADD);
     // reflektory z wież - wolno przeczesujące pustkowie snopy światła
     const beams = this.add.graphics().setDepth(1.5).setBlendMode(Phaser.BlendModes.ADD);
     const lamps = [78, 402].map((x) => this.add.ellipse(x, 107, 40, 26, 0xffe0a0, 0.25).setDepth(1.6).setBlendMode(Phaser.BlendModes.ADD));
@@ -794,7 +731,7 @@ export class IntroScene extends Phaser.Scene {
       const s = addUnit(this, 176 + i * 32, 197 + (i % 2) * 4, `rec_${r.id}`, unitLookOf(r), 'idle', 1.5);
       s.setDepth(5 + (i % 2)).setFlipX(i > 2).setTint(0xd8c8b8);
     });
-    const smoke = new Motes(this, 46, { x: 150, y: 70, w: 18, h: 50 }, 0x8a8a98, 4, -10, 5, 0.45, 1.2);
+    const smoke = new Motes(this, 46, { x: 300, y: 40, w: 16, h: 56 }, 0x8a8a98, 4, -10, 5, 0.45, 1.2);
     const embers = new Motes(this, 30, { x: 0, y: 150, w: BASE_W, h: 70 }, 0xffb060, 3, -8, 8, 0.6, 6);
     // życie w osadzie: pies obchodzi mur, kury dziobią przy bramie, kot na blankach
     const critters = [
@@ -802,7 +739,7 @@ export class IntroScene extends Phaser.Scene {
       new Walker(this, 'hen', 330, 352, 203, 4.5, FAUNA_PAL.hen, 2),
       new Walker(this, 'hen', 356, 380, 203, 4.5, FAUNA_PAL.hen, 3),
     ];
-    const cat = this.add.image(0, 174, pixelFrames(this, 'fauna_cat', SPRITES.CAT, FAUNA_PAL.cat)[0]).setOrigin(0.5, 1).setDepth(1.2);
+    const cat = this.add.image(0, 176, pixelFrames(this, 'fauna_cat', SPRITES.CAT, FAUNA_PAL.cat)[0]).setOrigin(0.5, 1).setDepth(1.2);
     const catKeys = pixelFrames(this, 'fauna_cat', SPRITES.CAT, FAUNA_PAL.cat);
     this.updaters.push((tq, dt) => {
       const t = tq / SEC;
@@ -819,8 +756,20 @@ export class IntroScene extends Phaser.Scene {
         c.offset = off;
         c.update(t, dt);
       }
-      cat.setX(Math.round(300 + off)).setTexture(catKeys[Math.floor(t * 1.5) % 4 === 0 ? 1 : 0]);
+      cat.setX(Math.round(110 + off)).setTexture(catKeys[Math.floor(t * 1.5) % 4 === 0 ? 1 : 0]);
       const fx = Math.round(-p * 0.5);
+      bulbs.update(t, fort.dx);
+      // spawanie: krótkie serie iskier co kilka sekund
+      weld.clear();
+      const cyc = t % 4.5;
+      if (cyc < 1.4) {
+        const [wx, wy] = depot.sparks;
+        weld.fillStyle(0xd0e8ff, 0.5 + 0.5 * Math.sin(t * 50)).fillRect(Math.round(wx + fort.dx) - 1, wy - 1, 3, 3);
+        for (let k = 0; k < 8; k++) {
+          const a = k * 2.4 + Math.floor(t * 20), d = ((t * 40 + k * 7) % 12);
+          weld.fillStyle(k % 2 ? 0xffe080 : 0xffffff, 1).fillRect(Math.round(wx + fort.dx + Math.cos(a) * d), Math.round(wy + Math.abs(Math.sin(a)) * d * 0.6 + d * d * 0.03), 1, 1);
+        }
+      }
       beams.clear();
       [78, 402].forEach((x, i) => {
         const a = -Math.PI / 2 + (i ? 0.55 : -0.55) + Math.sin(t * 0.35 + i * 2.1) * 0.5;
