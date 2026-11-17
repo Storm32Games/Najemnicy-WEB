@@ -217,31 +217,58 @@ export function paintDepot(g: Ctx2D, ox: number, r: R): { bulbs: [number, number
     P('#9a9a9a', x + w - 1, y);
   }
 
-  // szyld "PRZYSTAŃ" na desce nad środkową bramą, przekrzywiony, na jednym łańcuchu
+  // szyld "ZAJEZDNIA" na desce nad środkową bramą: przekrzywiony, na jednym łańcuchu, zniszczony -
+  // "E" odpadło (jaśniejszy ślad i gwoździe), "N" wisi na jednym gwoździu pod deską, prawy koniec deski
+  // odłamany razem z połową "A", farba odprysła, przez deskę biegnie pęknięcie
   const GL: Record<string, string[]> = {
-    P: ['111', '101', '111', '100', '100'], R: ['110', '101', '110', '101', '101'], Z: ['111', '001', '010', '100', '111'],
-    Y: ['101', '101', '010', '010', '010'], S: ['011', '100', '010', '001', '110'], T: ['111', '010', '010', '010', '010'],
-    A: ['010', '101', '111', '101', '101'], Ń: ['1001', '1101', '1011', '1001', '1001'],
+    Z: ['111', '001', '010', '100', '111'], A: ['010', '101', '111', '101', '101'], J: ['001', '001', '001', '101', '010'],
+    E: ['111', '100', '110', '100', '111'], D: ['110', '101', '101', '101', '110'], N: ['1001', '1101', '1011', '1001', '1001'],
+    I: ['1', '1', '1', '1', '1'],
   };
-  const word = 'PRZYSTAŃ';
+  const word = 'ZAJEZDNIA';
   const sw = [...word].reduce((a, ch) => a + GL[ch][0].length + 1, 1);
   const sx = cx - Math.floor(sw / 2), sy = base - GH - 14;
-  for (let x = -1; x <= sw; x++) {
-    const tilt = Math.round((x / sw) * 2);
-    P('#3a2618', sx + x, sy - 1 + tilt, 1, 9);
-    P('#5a3a22', sx + x, sy - 1 + tilt, 1, 1);
-  }
+  const tiltAt = (x: number): number => Math.round(((x - sx) / sw) * 2);
+  const cut = sw - 2; // odłamany koniec deski (poszarpana krawędź)
+  const edge = (y: number): number => cut + ((y * 5) % 3) - 1;
+  for (let x = -1; x <= sw; x++)
+    for (let y = -1; y < 8; y++) {
+      if (x > edge(y)) continue;
+      const crack = y === 3 + Math.round(Math.sin(x * 0.4) * 1.2) && x > 4 && x < sw - 12;
+      P(crack ? '#140c08' : y === -1 ? '#5a3a22' : y === 7 ? '#24160e' : '#3a2618', sx + x, sy + y + tiltAt(sx + x));
+    }
+  // odłamany kawałek leży pod bramą
+  P('#3a2618', sx + sw - 4, base - 2, 6, 2);
+  P('#e8dcb0', sx + sw - 2, base - 2, 1, 1);
   let lx = sx + 1;
-  for (const ch of word) {
-    const gl = GL[ch];
-    gl.forEach((row, yy) => [...row].forEach((b, xx) => {
-      if (b === '1') P(r() < 0.12 ? '#8a7a5a' : '#e8dcb0', lx + xx, sy + 1 + yy + Math.round(((lx + xx - sx) / sw) * 2));
-    }));
-    if (ch === 'Ń') P('#e8dcb0', lx + 2, sy - 1 + Math.round(((lx + 2 - sx) / sw) * 2));
-    lx += gl[0].length + 1;
-  }
-  L(sx + 1, sy - 1, sx + 6, eave + 6, '#5a5a5a'); // łańcuch (drugi zerwany)
-  L(sx + sw - 2, sy + 1, sx + sw, sy + 6, '#5a5a5a');
+  [...word].forEach((ch, i) => {
+    const gl = GL[ch], gw = gl[0].length;
+    if (i === 3) {
+      // odpadła litera: jaśniejsze, niezniszczone drewno w jej kształcie + dwa gwoździe
+      gl.forEach((row, yy) => [...row].forEach((bit, xx) => bit === '1' && P('#6a4a30', lx + xx, sy + 1 + yy + tiltAt(lx + xx))));
+      P('#9a9a9a', lx, sy + 1 + tiltAt(lx));
+      P('#9a9a9a', lx + 2, sy + 5 + tiltAt(lx + 2));
+    } else if (i === 6) {
+      // obsunęła się: wisi na jednym gwoździu (lewy górny róg), przekrzywiona, częściowo pod deską
+      const nx = lx, ny = sy + 4 + tiltAt(lx);
+      gl.forEach((row, yy) => [...row].forEach((bit, xx) => {
+        if (bit === '1') P('#d8cca0', nx + xx + Math.floor(yy / 2), ny + yy + Math.floor(xx * 0.6));
+      }));
+      P('#9a9a9a', nx, ny - 1);
+      P('#4e3424', lx + 1, sy + 1 + tiltAt(lx + 1), 3, 2); // jaśniejszy ślad po literze na desce
+    } else {
+      gl.forEach((row, yy) => [...row].forEach((bit, xx) => {
+        const x = lx + xx;
+        if (bit !== '1' || x - sx > edge(yy)) return; // połowa "A" odpadła z końcem deski
+        const chip = r() < 0.12;
+        P(chip ? '#6a5238' : '#e8dcb0', x, sy + 1 + yy + tiltAt(x));
+      }));
+    }
+    lx += gw + 1;
+  });
+  L(sx + 1, sy - 1, sx + 6, eave + 6, '#5a5a5a'); // łańcuch
+  L(sx + sw - 6, sy + 1, sx + sw - 4, sy + 7, '#5a5a5a'); // zerwany łańcuch zwisa
+  P('#5a5a5a', sx + sw - 3, sy + 8);
 
   // rura od piecyka wychodząca z dachu, krzywa, z daszkiem
   const px = cx + 62;
