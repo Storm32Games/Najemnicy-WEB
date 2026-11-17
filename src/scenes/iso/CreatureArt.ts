@@ -3,6 +3,9 @@
 //   quad = czworonóg (szczur, pies), swarm = rój, big = wielka bestia, drone = latający dron, turret = wieżyczka.
 // Gatunki (jak speciesBody w creature.js) wybierane po templateId: skorpion, kretowij, wilk, dzik, pająk, chrząszcz,
 // szczur, pies - malowane w podwójnej gęstości (48x64 px, iso/CreatureHD); kształty bez gatunku - tutaj, 24x32.
+// Gatunki z gotowym sprite'em PixelLab (src/assets/units/<templateId>/, tools/pixellab_fauna.py) używają go zamiast
+// tych klatek (UnitLooks.enemyUnitLook -> CreatureLook.sprite, SpriteUnits.paintSpriteSheet w trybie bestii); tu zostają
+// rój, dron, wieżyczka i bestie bez sprite'a.
 // Klatki 'b_*' patrzą w prawo-od-kamery (NE), 'f_*' w prawo-do-kamery (SE); lewe kierunki = flipX.
 import type { EnemyShape } from '../../core/data/types';
 import { PixelCanvas, type RGB, hash2, mix, pick, ramp } from './Pixel';

@@ -37,6 +37,11 @@ ACT={
  'bite':'lunges forward and attacks with a vicious bite / strike, then recoils back to its stance',
  'die':'is mortally wounded, staggers and collapses to the ground on its side, lies still',
 }
+# śmierć szczura i skorpiona: model v3 zostawiał ich stojących (3 z 4 kierunków), pixminimax kładzie je na ziemi
+ACT_DIE={
+ 'rat_mutant':'dies: collapses and falls over onto its side, ending lying flat and motionless on the ground',
+ 'scorpion':'dies: collapses and falls over onto its side, ending lying flat and motionless on the ground',
+}
 FB=['south-east','north-east','south-west','north-west']
 ALL8=['south','south-east','east','north-east','north','north-west','west','south-west']
 ROOT=os.path.join(os.path.dirname(os.path.abspath(__file__)),'..','src','assets','units')
@@ -88,12 +93,13 @@ elif cmd=='anim':
     while queue:
       uid,a,d=queue[0]; k=f'{uid}/{a}/{d}'
       if os.path.exists(out(uid,a,d)) or k in jobs: queue.pop(0); continue
-      body={'character_id':db[uid]['character_id'],'mode':'v3','action_description':ACT[a],'frame_count':8 if a=='walk' else 6,
+      body={'character_id':db[uid]['character_id'],'mode':'v3','action_description':ACT_DIE.get(uid,ACT[a]) if a=='die' else ACT[a],'frame_count':8 if a=='walk' else 6,
             'directions':[d],'animation_name':a}
+      if a=='die' and uid in ACT_DIE: body.update(mode='pixminimax',frame_count=8,initial_pose='standing on all legs')
       if groups.get(f'{uid}/{a}'): body['animation_group_id']=groups[f'{uid}/{a}']
       r=api('/characters/animations',body)
       if 'background_job_ids' not in r:
-        if 'slots' in str(r): break
+        if 'slots' in str(r) or 'concurrent' in str(r): break
         print('ERR',k,str(r)[:300]); queue.pop(0); continue
       groups[f'{uid}/{a}']=r.get('animation_group_id'); jobs[k]=r['background_job_ids'][0]; save(); queue.pop(0); print('submitted',k,flush=True)
     left=0

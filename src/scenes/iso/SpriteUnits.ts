@@ -372,6 +372,8 @@ interface StripUse {
   yoyo?: boolean;
   ground?: boolean;
   flash?: number;
+  /** Czas ostatniej klatki (zatrzymanie, np. zwłoki) - niezależnie od długości paska. */
+  hold?: number;
 }
 const range = (a: number, b: number): number[] => Array.from({ length: Math.max(0, b - a) }, (_, i) => a + i);
 const STRIP_USES: readonly StripUse[] = [
@@ -395,7 +397,7 @@ const STRIP_USES: readonly StripUse[] = [
  */
 const BEAST_STRIP_USES: readonly StripUse[] = [
   { anim: 'attack', strip: 'bite', ms: [70, 70, 60, 90, 110, 110, 120], loop: false },
-  { anim: 'die', strip: 'die', ms: [70, 90, 90, 90, 110, 160, 260], loop: false },
+  { anim: 'die', strip: 'die', ms: [70, 90, 90, 90, 100, 110, 130, 150], hold: 260, loop: false },
 ];
 
 /** Kierunek widoku (wektor ekranu) -> obrót sprite'a (8 kierunków, y w dół). */
@@ -510,7 +512,18 @@ function paintSheet(scene: Phaser.Scene, id: string, beast: boolean): UnitSheet 
         cells.push({ name, pc });
         return name;
       });
-      anims.push({ suffix: `${facing}_${u.anim}`, frames, durs: idx.map((_, j) => msOf(u, j)), loop: u.loop, yoyo: u.yoyo });
+      if (beast && u.strip === 'die' && !own)
+        // klatki 'die0'..'die6' (powalenie, zwłoki w WorldScene.lie) z paska zamiast obrotu sylwetki wokół stóp
+        for (let i = 0; i <= 6; i++) {
+          const cell = cells.find((c) => c.name === `${facing}_die${i}`);
+          if (!cell) continue;
+          cell.pc = stripCell(src, fr[0], fr[idx[Math.round((i * (idx.length - 1)) / 6)]], false);
+          if (i >= 5) {
+            tint(cell.pc, 0x1a0e0c, 0.18);
+            puddle(cell.pc, i === 6 ? 1 : 0.6);
+          }
+        }
+      anims.push({ suffix: `${facing}_${u.anim}`, frames, durs: idx.map((_, j) => (u.hold && j === idx.length - 1 ? u.hold : msOf(u, j))), loop: u.loop, yoyo: u.yoyo });
     }
   }
 
