@@ -58,3 +58,7 @@ The user wants a PR to `main` after every pushed change, without being asked (st
 - Before creating, run `git log --oneline origin/main..HEAD` so the PR describes only commits not yet in `main`. If the branch's previous PR was merged, fast-forward the branch to `origin/main` first (`git merge --ff-only origin/main`) when it has no unmerged commits.
 - PR description in Polish: sections **Zmiany** and **Testy** (what was run: `tsc`, `build`, Playwright checks), plus any limitations.
 - Give the user the PR link in the reply. Do not merge PRs yourself.
+
+## Game Design Notes (remembered decisions)
+- **Food supplies of Przystań** (`src/core/campaign/food.ts`, `CampaignState.food` in days): survivors eat 1 day of supplies per day (rest, contract travel days, travel events that add days); 12% daily chance of extra loss. Start 8, granary max 20. Starvation: -1 rep with Ocaleni per hungry day.
+- **Forage contract (`forage`, "Zaopatrzenie")**: always on the board when food <= `FOOD_LOW` (4), 30% chance when <= 7, removed when > 12. Not part of `SIDE_TYPES`. Mission: collect 3-4 supply caches (`Mission.supplies`, kind `item` + `objective`) and extract. Reward `reward.food` (days); retreat gives food per collected cache. Supplies go to the granary, not the backpack.
