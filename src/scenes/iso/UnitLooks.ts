@@ -201,6 +201,8 @@ export interface CreatureLook {
   readonly shape: EnemyShape;
   readonly skin: number;
   readonly accent: number;
+  /** Gotowa bestia PixelLab (src/assets/units/<templateId>/) zamiast klatek malowanych kodem. */
+  readonly sprite?: string;
 }
 
 /** Wygląd wroga tak jak trzyma go Character.look / EnemyDef.look. */
@@ -243,7 +245,8 @@ export function enemyUnitLook(templateId: string | undefined | null, look?: Enem
 
   if (shape !== 'humanoid' && !boss) {
     const skin = parseColor(lk.skin, 0x8a6a4a), accent = parseColor(lk.accent, 0xff3a2a);
-    return { creature: creatureSpecies(tid) ?? shape, shape, skin, accent };
+    const sprite = enemySpriteId(templateId ? String(templateId) : null);
+    return { creature: creatureSpecies(tid) ?? shape, shape, skin, accent, ...(sprite ? { sprite } : {}) };
   }
 
   const skinC = parseColor(lk.skin, LOOK_RAIDER.skin);
@@ -363,7 +366,7 @@ const animTex = new Map<string, string>();
  * `build` (opcjonalnie) zastępuje paintUnitSheet(look), np. () => enemySheet(templateId, look).
  */
 export function ensureUnit(scene: Phaser.Scene, name: string, look: UnitLook | CreatureLook, build?: () => UnitSheet): string {
-  const sprite = !build && !isCreatureLook(look) && look.sprite && hasSprite(scene, look.sprite) ? look.sprite : null;
+  const sprite = !build && look.sprite && hasSprite(scene, look.sprite) ? look.sprite : null;
   // sprite PixelLab: tekstura na wariant (zmiana broni = inny obraz i inny układ klatek, nie przemalowanie w miejscu)
   const tex = sprite ? `unit_${name}|${sprite}` : `unit_${name}`;
   const sig = JSON.stringify(look);
@@ -377,7 +380,7 @@ export function ensureUnit(scene: Phaser.Scene, name: string, look: UnitLook | C
     animTex.set(name, tex);
   }
   const paint = (): UnitSheet =>
-    sprite ? paintSpriteSheet(scene, sprite)
+    sprite ? paintSpriteSheet(scene, sprite, isCreatureLook(look))
     : build ? build() : isCreatureLook(look) ? paintCreatureSheet(look.shape, look.skin, look.accent, look.creature) : paintUnitSheet(look);
   if (!scene.textures.exists(tex)) {
     const sheet = paint();

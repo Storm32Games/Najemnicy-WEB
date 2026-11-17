@@ -33,7 +33,7 @@ import { PixelCanvas, hash2, rng } from './iso/Pixel';
 import { Atmosphere, type MoodName, type WorldLight, asMood, fogMemoryTint } from './fx/Atmosphere';
 import { WorldFx, tracerStyleFor } from './fx/WorldFx';
 import { paintScorch } from './iso/FxArt';
-import { enemySheet, enemyUnitLook, ensureUnit, isCreatureLook, unitLookOf } from './iso/UnitLooks';
+import { type CreatureLook, enemySheet, enemyUnitLook, ensureUnit, isCreatureLook, unitLookOf } from './iso/UnitLooks';
 import { spriteIdOf } from './iso/SpriteUnits';
 import { BASE_H, BASE_W, SX0, SY0, VH, VW, ZOOM, PAL, fitViewport, goto, label } from './ui/Kit';
 import { type MissionResume, Save, enterLoaded, modalOpen, openSaveSlots } from './ui/Widgets';
@@ -1137,7 +1137,7 @@ export class WorldScene extends Phaser.Scene {
         continue;
       }
       let key: string;
-      let look: UnitLook;
+      let look: UnitLook | CreatureLook;
       let sheet: (() => ReturnType<typeof paintUnitSheet>) | undefined;
       let faunaScale = 1;
       if (a.side === 'pc') {
@@ -1152,7 +1152,11 @@ export class WorldScene extends Phaser.Scene {
           // wygląd z szablonu wroga (iso/UnitLooks: broń z ataku, maski, robot, Kostucha; bestie - własny gatunek)
           key = `en_${a.ch.templateId}`;
           const el = enemyUnitLook(a.ch.templateId, lk);
-          if (isCreatureLook(el)) {
+          if (isCreatureLook(el) && el.sprite) {
+            // bestia PixelLab (src/assets/units/<templateId>/): gotowy wygląd, losowy tylko rozmiar
+            look = el;
+            faunaScale = 0.92 + (((hashStr(a.id + this.mission.contract.id) >>> 4) % 1000) / 1000) * 0.24;
+          } else if (isCreatureLook(el)) {
             // Oldgame mission.js:151-158: zmutowana fauna - losowa barwa skóry / ślepi i rozmiar (75%, kosmetyka)
             const h = hashStr(a.id + this.mission.contract.id);
             if (h % 100 < 75) {
@@ -1179,7 +1183,12 @@ export class WorldScene extends Phaser.Scene {
     this.focus = this.units.get(this.selected ?? this.mission.pcs[0])!;
   }
 
-  private makeUnit(name: string, look: UnitLook, actor: Actor, build?: () => ReturnType<typeof paintUnitSheet>): Unit {
+  /** Górna krawędź postaci (pasek PW, napisy): klatki bestii PixelLab są wyższe niż sylwetka - najwyżej 32 px nad stopami. */
+  private unitTop(u: Unit): number {
+    return u.sprite.y - Math.min(u.sprite.displayHeight * u.sprite.originY, 32 * Math.abs(u.sprite.scaleY));
+  }
+
+  private makeUnit(name: string, look: UnitLook | CreatureLook, actor: Actor, build?: () => ReturnType<typeof paintUnitSheet>): Unit {
     // ensureUnit przemalowuje arkusz, gdy wygląd się zmienił (np. inna broń po wizycie u handlarza)
     const tex = ensureUnit(this, name, look, build);
     const pos = { gx: actor.gx, gy: actor.gy };
@@ -3714,7 +3723,7 @@ export class WorldScene extends Phaser.Scene {
         this.barMarks.get(a)?.setVisible(false);
         continue;
       }
-      const top = u.sprite.y - u.sprite.displayHeight * u.sprite.originY + 2;
+      const top = this.unitTop(u) + 2;
       const p = Math.max(0, Math.min(1, a.ch.maxHp > 0 ? a.ch.hp / a.ch.maxHp : 0));
       const fill = a.side === 'pc' ? (p > 0.5 ? 0x6fd04a : p > 0.25 ? 0xf2a93b : 0xe0553f) : p > 0.5 ? 0xd9473a : p > 0.25 ? 0xe0803a : 0xf0c040;
       const x0 = Math.round(u.sprite.x - 8), y0 = Math.round(top);
@@ -3895,7 +3904,7 @@ export class WorldScene extends Phaser.Scene {
     f.n = now - f.t < 600 ? f.n + 1 : 0;
     f.t = now;
     this.floatStack.set(a, f);
-    const top = u.sprite.y - u.sprite.displayHeight * u.sprite.originY;
+    const top = this.unitTop(u);
     this.floatingText(u.sprite.x, top - 2 - Math.min(f.n, 4) * 9, text, color);
   }
 
