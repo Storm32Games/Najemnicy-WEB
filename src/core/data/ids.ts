@@ -113,10 +113,13 @@ export type ItemId =
   | 'smoke_grenade'
   | 'emp_grenade'
   | 'combat_stim'
+  | 'dynamite_charge'
+  | 'time_bomb'
   | 'scrap_metal'
   | 'copper_wire'
   | 'canned_food'
   | 'old_watch'
+  | 'dynamite'
   | 'trophy_teeth'
   | 'mutant_gland'
   | 'fuel_can'
@@ -173,7 +176,9 @@ export type ConsumableId =
   | 'molotov'
   | 'smoke_grenade'
   | 'emp_grenade'
-  | 'combat_stim';
+  | 'combat_stim'
+  | 'dynamite_charge'
+  | 'time_bomb';
 
 export type EnemyId =
   | 'rat_mutant'

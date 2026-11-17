@@ -9,6 +9,7 @@ import {
   generateMap, Mission, runAiTurn, CellKind, MAP_W, MAP_H,
   freshState, generateContracts, applyMissionResult, EVENTS, resolveEventChoice, shopStock, buy, sellPrice, restDay,
   makeContract, refreshBoard, consumeFood, addFood, FOOD_LOW, FOOD_MAX,
+  RECIPES, WORKSHOP_LEVELS, recipeDef, techOf, partCount, recipeState, research, craft, craftCost, storePart, partUses, upgradeWorkshop, nextLevel, researchBlock,
 } from '../src/core/index.ts';
 import { HudState, backpackRows, conditionChips, equipmentRows, hpTone, plural, statPairs } from '../src/core/HudState.ts';
 import { itemTargeting, previewStrike } from '../src/core/SkirmishRules.ts';
@@ -876,6 +877,64 @@ function simulateMission(contract: Contract, party: Character[], seed: number): 
     const m3 = new Mission(m.contract, st.party, makeRng(1), snap);
     ok(m3.things.filter((x) => x.kind === 'wreck').length === m.things.filter((x) => x.kind === 'wreck').length, 'wreck: old saves get wrecks re-added');
   }
+}
+
+// ------------------------------------------------------------ warsztat (campaign/tech.ts)
+{
+  const st = freshState();
+  st.party = [createCharacter({ name: 'Lut', classId: 'techie', ancestry: 'human' })];
+  st.scrap = 500;
+  st.food = 20;
+  ok(RECIPES.every((r) => (ITEMS as Record<string, unknown>)[r.out.id] && r.parts.every((p) => (ITEMS as Record<string, unknown>)[p.id])), 'tech: recipes reference real items');
+  ok(RECIPES.every((r) => r.level < WORKSHOP_LEVELS.length), 'tech: recipe levels exist');
+  // stary zapis bez pola tech
+  const old = JSON.parse(JSON.stringify(st));
+  delete old.tech;
+  const t0 = techOf(old);
+  ok(t0.known.length === 0 && t0.level === 0 && Array.isArray(t0.parts), 'tech: old saves get empty workshop');
+  ok(!shopStock({ day: 3 }, 5).includes('time_bomb') && !shopStock({ day: 3 }, 5).includes('dynamite_charge'), 'tech: exclusive items not in random stock');
+  ok(recipeState(st, 'time_bomb') === 'unknown', 'tech: unknown recipe without parts');
+  st.stash.push(newItem('old_watch'), newItem('dynamite'));
+  ok(recipeState(st, 'time_bomb') === 'hinted', 'tech: half of parts hints the recipe');
+  ok(researchBlock(st, 'time_bomb') !== null, 'tech: level 1 recipe blocked at level 0');
+  st.stash.push(newItem('copper_wire'), newItem('copper_wire'));
+  ok(partUses('old_watch').some((r) => r.id === 'time_bomb'), 'tech: part uses lists the recipe');
+  // magazyn warsztatu: część oddana ze skrytki liczy się dalej
+  const wire = st.stash.find((i) => i.id === 'copper_wire')!;
+  ok(storePart(st, wire, st.stash) && techOf(st).parts.length === 1 && partCount(st, 'copper_wire') === 2, 'tech: stored part still counts');
+  ok(!storePart(st, newItem('trophy_teeth'), st.stash), 'tech: non-part cannot be stored');
+  // opracowanie: przy pewnym sukcesie (rng 0.99 -> nat 20)
+  const day0 = st.day, scrap0 = st.scrap;
+  const r = research(st, 'dynamite_charge', () => 0.99);
+  ok(r.ok && r.learned && techOf(st).known.includes('dynamite_charge'), 'tech: research learns schematic');
+  ok(st.day === day0 + r.days! && st.scrap === scrap0 - recipeDef('dynamite_charge')!.scrap, 'tech: research costs days and scrap');
+  ok(partCount(st, 'dynamite') === 0 && partCount(st, 'copper_wire') === 1, 'tech: research consumes parts (workshop first)');
+  ok(techOf(st).parts.length === 0, 'tech: workshop store used before stash');
+  ok(st.stash.some((i) => i.id === 'dynamite_charge'), 'tech: first copy free');
+  ok(shopStock(st, 1).includes('dynamite_charge'), 'tech: trader stocks researched item');
+  ok(!research(st, 'dynamite_charge').ok, 'tech: cannot research twice');
+  // produkcja
+  ok(!craft(st, 'dynamite_charge').ok, 'tech: craft needs parts');
+  st.stash.push(newItem('dynamite'));
+  const s1 = st.scrap;
+  const c = craft(st, 'dynamite_charge');
+  ok(c.ok && st.scrap === s1 - craftCost(recipeDef('dynamite_charge')!) && partCount(st, 'dynamite') === 0, 'tech: craft uses parts and scrap');
+  ok(!craft(st, 'time_bomb').ok, 'tech: craft needs known schematic');
+  // krytyczna porażka: część przepada, schemat nie powstaje
+  st.stash.push(newItem('fuel_can'));
+  const f = research(st, 'molotov', () => 0);
+  ok(f.ok && !f.learned && partCount(st, 'fuel_can') === 0 && !techOf(st).known.includes('molotov'), 'tech: critical failure destroys a part');
+  // rozbudowa: 3 schematy + akumulator
+  ok(!upgradeWorkshop(st).ok, 'tech: upgrade needs schematics');
+  st.stash.push(newItem('fuel_can'), newItem('scrap_metal'), newItem('scrap_metal'), newItem('copper_wire'));
+  research(st, 'molotov', () => 0.99);
+  research(st, 'lockpick', () => 0.99);
+  ok(techOf(st).known.length === 3 && nextLevel(st)!.missing.length === 1, 'tech: upgrade still needs battery');
+  st.stash.push(newItem('battery'));
+  ok(upgradeWorkshop(st).ok && techOf(st).level === 1 && partCount(st, 'battery') === 0, 'tech: upgrade consumes key part');
+  st.stash.push(newItem('old_watch'), newItem('dynamite'), newItem('copper_wire'));
+  ok(research(st, 'time_bomb', () => 0.99).learned, 'tech: level 1 recipe after upgrade');
+  ok(noFn(st), 'tech: state stays JSON-safe');
 }
 
 console.log(`\n${checks} checks, ${fails} failures`);

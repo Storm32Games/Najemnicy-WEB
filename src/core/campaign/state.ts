@@ -55,10 +55,23 @@ export interface CampaignState {
   story: number;
   flags: { fallen?: string[]; fallenIds?: string[]; victory?: boolean; [k: string]: unknown };
   log: { day: number; text: string }[];
+  /** Warsztat Przystani (campaign/tech.ts). Stare zapisy: brak pola - techOf() uzupełnia. */
+  tech: TechState;
 }
 
+/** Postęp technologiczny: opracowane schematy, odsłonięte receptury, poziom warsztatu, magazyn części. */
+export interface TechState {
+  known: string[];
+  hinted: string[];
+  level: number;
+  /** Części oddane do warsztatu (nie do sprzedania, nie do plecaka). */
+  parts: ItemInstance[];
+}
+
+export const freshTech = (): TechState => ({ known: [], hinted: [], level: 0, parts: [] });
+
 export function freshState(): CampaignState {
-  return { version: 1, party: [], scrap: 120, food: 8, day: 1, rep: { nomads: 0, survivors: 0 }, stash: [], contracts: [], completed: [], story: 0, flags: {}, log: [] };
+  return { version: 1, party: [], scrap: 120, food: 8, day: 1, rep: { nomads: 0, survivors: 0 }, stash: [], contracts: [], completed: [], story: 0, flags: {}, log: [], tech: freshTech() };
 }
 
 /** Średni poziom drużyny w kampanii (min. 1). */

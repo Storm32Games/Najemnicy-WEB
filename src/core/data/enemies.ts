@@ -166,6 +166,7 @@ export const ENEMIES = {
       { id: 'pipe', chance: 0.15, qty: 1 },
       { id: 'bandage', chance: 0.25, qty: 1 },
       { id: 'trophy_teeth', chance: 0.3, qty: 1 },
+      { id: 'old_watch', chance: 0.1, qty: 1 },
       { id: 'scrap_metal', chance: 0.5, qty: 2 },
     ],
     scrap: [3, 12],
@@ -218,6 +219,7 @@ export const ENEMIES = {
     loot: [
       { id: 'molotov', chance: 0.5, qty: 1 },
       { id: 'fuel_can', chance: 0.4, qty: 1 },
+      { id: 'dynamite', chance: 0.25, qty: 1 },
       { id: 'trophy_teeth', chance: 0.3, qty: 1 },
     ],
     scrap: [5, 18],
@@ -245,6 +247,7 @@ export const ENEMIES = {
     loot: [
       { id: 'combat_stim', chance: 0.3, qty: 1 },
       { id: 'machete', chance: 0.2, qty: 1 },
+      { id: 'dynamite', chance: 0.15, qty: 1 },
       { id: 'trophy_teeth', chance: 0.4, qty: 1 },
     ],
     scrap: [4, 16],

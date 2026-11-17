@@ -9,3 +9,4 @@ export * from './abilities.ts';
 export * from './recruits.ts';
 export * from './story.ts';
 export * from './names.ts';
+export * from './recipes.ts';

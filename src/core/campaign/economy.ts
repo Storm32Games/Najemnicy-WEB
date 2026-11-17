@@ -7,7 +7,8 @@ import { allItems, itemDef } from '../rules/lookup.ts';
 import type { Character, ItemInstance } from '../rules/types.ts';
 import { refreshBoard } from './contracts.ts';
 import { consumeFood, type FoodReport } from './food.ts';
-import type { CampaignState } from './state.ts';
+import { RECIPES, recipeDef } from '../data/recipes.ts';
+import type { CampaignState, TechState } from './state.ts';
 
 /** Rabat u Nomadów: 2% za punkt reputacji (od -20% do 25%). */
 export const nomadDiscount = (state: Pick<CampaignState, 'rep'>): number => Math.min(0.25, Math.max(-0.2, (state.rep.nomads || 0) * 0.02));
@@ -22,14 +23,21 @@ export function sellPrice(id: string, state: Pick<CampaignState, 'rep'>): number
   return Math.max(0, Math.floor((it?.price ?? 0) * (base + Math.min(0.1, Math.max(0, (state.rep.nomads || 0) * 0.01)))));
 }
 
-/** Asortyment na dany dzień (deterministyczny): 8 konsumabelek/amunicji + 12 sztuk sprzętu do poziomu drużyny + 1. */
-export function shopStock(state: Pick<CampaignState, 'day'>, partyLvl = 1): string[] {
-  const all = allItems().filter((i) => i.price > 0 && i.type !== 'junk' && i.level <= partyLvl + 1);
+/**
+ * Asortyment na dany dzień (deterministyczny): 8 konsumabelek/amunicji + 12 sztuk sprzętu do poziomu drużyny + 1,
+ * plus zawsze wyniki schematów opracowanych w warsztacie (campaign/tech.ts). Przedmioty tylko ze schematu
+ * (RecipeDef.exclusive) nie trafiają do losowej oferty.
+ */
+export function shopStock(state: Pick<CampaignState, 'day'> & { tech?: Partial<TechState> }, partyLvl = 1): string[] {
+  const exclusive = new Set(RECIPES.filter((r) => r.exclusive).map((r) => r.out.id as string));
+  const all = allItems().filter((i) => i.price > 0 && i.type !== 'junk' && i.level <= partyLvl + 1 && !exclusive.has(i.id));
   const rng = makeRng((state.day || 1) * 7919 + 13);
   const isCons = (t: string): boolean => t === 'consumable' || t === 'ammo';
   const shuffle = <T>(a: T[]): T[] => a.map((v) => [rng(), v] as const).sort((x, y) => x[0] - y[0]).map((x) => x[1]);
   const picked = [...shuffle(all.filter((i) => isCons(i.type))).slice(0, 8), ...shuffle(all.filter((i) => !isCons(i.type))).slice(0, 12)];
-  return [...new Set(picked.map((i) => i.id))];
+  const known = (state.tech?.known ?? []).flatMap((id) => recipeDef(id)?.out.id ?? []);
+  // schematy z warsztatu na początku listy (stały towar)
+  return [...new Set([...known, ...picked.map((i) => i.id)])];
 }
 
 export function buy(state: CampaignState, id: string): { ok: boolean; reason?: string; item?: ItemInstance } {
