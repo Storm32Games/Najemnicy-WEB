@@ -20,12 +20,12 @@ import type { ActionResult, Character, GridPos } from '../core/rules/types';
 import { aiStep } from '../core/tactical/ai';
 import { type ActionOutcome, type Actor, type ActorState, type CombatSignal, type StrikeInfo, type TurnInfo, Combat, exploreAbilityOk, exploreItemOk } from '../core/tactical/combat';
 import { CellKind, type SearchResult, UNREACHABLE, cheb, strideActions } from '../core/tactical/grid';
-import type { Biome, MapProp, PropType, TacticalMap } from '../core/tactical/mapgen';
-import { CRATE_SKILLS, type MissionContract, type MissionFind, type MissionResult, type MissionSignal, type MissionThing, Mission } from '../core/tactical/mission';
+import { WRECK_TYPES, type Biome, type MapProp, type PropType, type TacticalMap } from '../core/tactical/mapgen';
+import { CRATE_SKILLS, SALVAGE_ACTIONS, type MissionContract, type MissionFind, type MissionResult, type MissionSignal, type MissionThing, Mission } from '../core/tactical/mission';
 import { TurnPhase } from '../core/TurnManager';
 import { MAX_ACTION_POINTS } from '../core/TurnState';
 import {
-  ArtBook, BIOME_STYLE, type DecalType, FLOOR_SPILL, paintAO, paintBlend, paintBlobShadow, paintBlock, paintCursor, paintDecal, paintEdge, paintFlames,
+  ArtBook, type ArtInfo, BIOME_STYLE, type DecalType, FLOOR_SPILL, paintAO, paintBlend, paintBlobShadow, paintBlock, paintCursor, paintDecal, paintEdge, paintFlames,
   paintExtractPost, paintFloor, paintGlow, paintLootCrate, paintLootCrateOpen, paintNest, paintObjective, paintSupplies, paintPathDot, paintProp, paintSparkle, paintText,
   paintVignette, paintWall,
 } from './iso/IsoArt';
@@ -323,6 +323,8 @@ export class WorldScene extends Phaser.Scene {
   private modeHint: string | null = null;
   private extractAsked = false;
   private crates = new Map<number, { img: Phaser.GameObjects.Image; sparkle: Phaser.GameObjects.Sprite | null }>();
+  /** Wraki pojazdów (obraz do podmiany po rozebraniu / wybuchu, płomienie wysadzonych). */
+  private wrecks = new Map<number, { img: Phaser.GameObjects.Image; prop: MapProp; rot: number; flames: Phaser.GameObjects.Sprite | null }>();
   private objMarker: { imgs: Phaser.GameObjects.Image[]; light: LightView | null } | null = null;
   /** Obiekty celów zlecenia na mapie: serwer (włamanie) i gniazda (oczyszczanie). */
   private thingMarks = new Map<MissionThing, { imgs: Phaser.GameObjects.Image[]; light: LightView | null }>();
@@ -400,6 +402,7 @@ export class WorldScene extends Phaser.Scene {
     this.modeHint = null;
     this.extractAsked = false;
     this.crates = new Map();
+    this.wrecks = new Map();
     this.objMarker = null;
     this.extract = null;
     this.floatStack = new Map();
@@ -890,14 +893,17 @@ export class WorldScene extends Phaser.Scene {
         if (!broken) this.addTall(gx, gy, img, info.ay);
         return;
       }
-      const v = p.seed % (type === 'car' || type === 'scrap_pile' ? 7 : 3);
       // orientacja w widoku: przy obrocie o 90° / 270° oś rekwizytu zamienia się
       const rot = type === 'door' ? (wallV(gx, gy, -1, 0) || wallV(gx, gy, 1, 0) ? 0 : 1) : p.rot + VIEW.r;
-      const k = `prop_${type}_${rot % 2}_${v}_${this.biome}`;
-      const info = this.art.get(k, () => paintProp(type, rot, v * 1009 + 1, this.biome));
+      const wreck = WRECK_TYPES.has(type) ? this.wreckAt(gx, gy) : undefined;
+      const { key: k, ax, ay } = this.propArt(p, rot, wreck);
       const flat = type === 'skeleton';
-      const img = this.place(gx, gy, k, info.ax, info.ay, flat ? D_DECAL : objDepth(gx, gy, L_PROP));
-      if (info.ay > 34) this.addTall(gx, gy, img, info.ay);
+      const img = this.place(gx, gy, k, ax, ay, flat ? D_DECAL : objDepth(gx, gy, L_PROP));
+      if (ay > 34) this.addTall(gx, gy, img, ay);
+      if (wreck) {
+        this.wrecks.set(this.idx(gx, gy), { img, prop: p, rot, flames: null });
+        if (wreck.exploded) this.wreckFlames(wreck);
+      }
 
       // światła i efekty rekwizytów
       switch (type) {
@@ -953,6 +959,44 @@ export class WorldScene extends Phaser.Scene {
     }
     for (const th of this.mission.things) this.addThingMark(th);
     this.buildExtraction();
+  }
+
+  /** Wrak pojazdu w polu (także rozebrany / wysadzony). */
+  private wreckAt(gx: number, gy: number): MissionThing | undefined {
+    return this.mission.things.find((t) => t.kind === 'wreck' && t.gx === gx && t.gy === gy);
+  }
+
+  /** Tekstura rekwizytu; wrak wg stanu z misji (spalony / wysadzony, rozebrany). */
+  private propArt(p: MapProp, rot: number, wreck?: MissionThing): ArtInfo {
+    const v = p.seed % (p.type === 'car' || p.type === 'scrap_pile' ? 7 : 3);
+    const look = wreck ? { burnt: !!wreck.burnt, stripped: wreck.done && !wreck.exploded } : {};
+    const lk = wreck ? `_w${look.burnt ? 1 : 0}${look.stripped ? 1 : 0}` : '';
+    const k = `prop_${p.type}_${rot % 2}_${v}_${this.biome}${lk}`;
+    return this.art.get(k, () => paintProp(p.type, rot, v * 1009 + 1, this.biome, look));
+  }
+
+  /** Podmiana obrazu wraku po rozebraniu / wybuchu. */
+  private refreshWreck(th: MissionThing): void {
+    const w = this.wrecks.get(this.idx(th.gx, th.gy));
+    if (!w) return;
+    const info = this.propArt(w.prop, w.rot, th);
+    w.img.setTexture(info.key).setPosition(isoX(th.gx, th.gy) - info.ax, isoY(th.gx, th.gy) - info.ay);
+    if (th.exploded) this.wreckFlames(th);
+  }
+
+  /** Dopalający się wrak: płomienie i migoczące światło. */
+  private wreckFlames(th: MissionThing): void {
+    const w = this.wrecks.get(this.idx(th.gx, th.gy));
+    if (!w || w.flames) return;
+    const { gx, gy } = th;
+    this.addLight(gx, gy, 0xff7a30, 0.5, 0.5, 4, 0.7, 'flicker', 1.1);
+    const { x, y } = tileCenter({ gx, gy });
+    const fire = this.add.sprite(x + 2, y - 3, 'fx_flames', 'f0').setOrigin(0.5, 1).setDepth(objDepth(gx, gy, L_FX)).setBlendMode(Phaser.BlendModes.ADD);
+    fire.play({ key: 'flames', startFrame: Math.floor(hash2(gx, gy, 3) * 4) });
+    const cell = this.cells[this.idx(gx, gy)];
+    fire.setVisible(cell.state !== 0);
+    cell.imgs.push(fire as unknown as Phaser.GameObjects.Image);
+    w.flames = fire;
   }
 
   /** Serwer (zostaje po zhakowaniu, gaśnie światło) albo gniazdo mutantów (znika po zniszczeniu). */
@@ -1456,6 +1500,7 @@ export class WorldScene extends Phaser.Scene {
     this.glows = [];
     this.sparkles = new Map();
     this.crates = new Map();
+    this.wrecks = new Map();
     this.objMarker = null;
     this.thingMarks = new Map();
     this.extract = null;
@@ -2396,6 +2441,7 @@ export class WorldScene extends Phaser.Scene {
     const a = t.actor;
     if (cheb(a, th) > 1) return this.deny('Podejdź bliżej (obok obiektu).');
     if (t.actions < 1) return this.deny('Brak akcji.');
+    if (th.kind === 'wreck' && t.actions < SALVAGE_ACTIONS) return this.deny(`Rozbieranie wraku zajmuje całą turę (${SALVAGE_ACTIONS} akcje).`);
     let skill: SkillId | undefined;
     if (th.kind === 'crate' || th.kind === 'door' || th.kind === 'device') {
       this.hud.setBusy(true);
@@ -2826,6 +2872,12 @@ export class WorldScene extends Phaser.Scene {
       case 'interact':
         this.onInteract(s.thing, s.by);
         break;
+      case 'salvage':
+        await this.onSalvage(s);
+        break;
+      case 'wreckBlast':
+        await this.onWreckBlast(s.thing, s.hits);
+        break;
       case 'lock':
         await this.onLock(s.thing, s.by, s.attempt, s.hack);
         break;
@@ -2919,6 +2971,58 @@ export class WorldScene extends Phaser.Scene {
     await this.wait(250);
   }
   private lastCrateSkill: SkillId | null = null;
+
+  /** Rozbieranie wraku: majsterkowanie przy blasze, kość, złom / rana, hałas; wrak traci koła, drzwi i maskę. */
+  private async onSalvage(s: Extract<MissionSignal, { kind: 'salvage' }>): Promise<void> {
+    const { thing: th, by, roll: r } = s;
+    const bu = this.units.get(by);
+    if (bu) {
+      this.face(bu, { gx: th.gx - by.gx, gy: th.gy - by.gy });
+      this.act(bu, 'hack');
+      SoundManager.sfx('melee', { vol: 0.35, pitch: 0.6 });
+      await this.wait(300);
+      SoundManager.sfx('door', { vol: 0.4, pitch: 0.7 });
+      await this.wait(260);
+    }
+    await this.dice(r, `${th.name}: Majsterkowanie`, by);
+    if (r.degree === 0) {
+      SoundManager.sfx('melee', { vol: 0.6, pitch: 0.5 });
+      this.floatAbove(by, `-${s.hurt}`, COLOR_HOSTILE);
+      if (bu) {
+        this.pose(bu, 'hurt');
+        this.time.delayedCall(280, () => this.rest(bu));
+      }
+    } else {
+      SoundManager.sfx('coin');
+      if (s.items.length) SoundManager.sfx('pickup');
+      this.floatAbove(by, `+${s.scrap} Złomu`, C_LOOT);
+      if (bu) this.time.delayedCall(240, () => this.rest(bu));
+    }
+    if (s.noise >= 8) this.floatAbove(by, 'HAŁAS!', COLOR_HOSTILE);
+    this.refreshWreck(th);
+    this.hud.notify('stats');
+    await this.wait(250);
+  }
+
+  /** Wybuch baku wraku: ognista eksplozja, wstrząs, przypalenie, obrażenia w promieniu 1, wrak dopala się. */
+  private async onWreckBlast(th: MissionThing, hits: { actor: Actor; dmg: number }[]): Promise<void> {
+    const c = tileCenter(th);
+    SoundManager.sfx('explosion', { vol: 1.1, pitch: 0.8 });
+    this.cameras.main.shake(220, 0.012);
+    this.fx.explosion(c.x, c.y - 4, 1.5, 'fire');
+    this.refreshWreck(th);
+    for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) if (hash2(th.gx + dx, th.gy + dy, 7) < 0.5 || (!dx && !dy)) this.addScorch({ gx: th.gx + dx, gy: th.gy + dy });
+    for (const h of hits) {
+      this.floatAbove(h.actor, `-${h.dmg}`, h.actor.side === 'pc' ? COLOR_HOSTILE : 0xffa040);
+      const u = this.units.get(h.actor);
+      if (u && h.actor.state === 'up') {
+        this.pose(u, 'hurt');
+        this.time.delayedCall(280, () => this.rest(u));
+      }
+    }
+    this.hud.notify('stats');
+    await this.wait(420);
+  }
 
   /** Wynik próby wytrychem / wyważenia / hakowania: kość k20 z postępem, dźwięk i napis nad postacią. */
   private async onLock(th: MissionThing, by: Actor, at: LockAttempt, hack: boolean): Promise<void> {
@@ -3388,8 +3492,9 @@ export class WorldScene extends Phaser.Scene {
         : th.kind === 'device' ? `${th.name} (ST ${th.lock?.dc}, ${th.lock?.progress}/${th.lock?.needed})${th.lock?.jammed ? ' — ZABLOKOWANY' : ' — kliknij, by zhakować'}`
         : th.kind === 'item' ? `${th.name} — kliknij, by zabrać`
         : th.kind === 'nest' ? `${th.name} — kliknij, by zniszczyć`
+        : th.kind === 'wreck' ? `${th.name}${th.burnt ? ' (spalony)' : ''} — kliknij, by rozebrać na złom (Majsterkowanie, KT ${this.mission.wreckDC(th)}; hałas!)`
         : `${th.name} — kliknij, by uwolnić`;
-      this.hud.setHover(`${what}${t ? ' (obok, 1 akcja)' : ''}`);
+      this.hud.setHover(`${what}${t ? (th.kind === 'wreck' ? ' (obok, cała tura)' : ' (obok, 1 akcja)') : ''}`);
       return;
     }
     this.hud.setHover(this.modeHint);
