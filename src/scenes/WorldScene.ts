@@ -61,6 +61,20 @@ const TILE_H = 16;
  * a dopiero widok trafia do rzutu izo. Głębia i maski sąsiedztwa grafik liczone są w widoku.
  */
 const VIEW = { r: 0, w: 32, h: 32 };
+
+/** Obiekt sceny przesuwany w animacji obrotu widoku. */
+type SpinObj = Phaser.GameObjects.GameObject & {
+  x: number; y: number; alpha: number; visible: boolean; scrollFactorX: number;
+  setAlpha(a: number): unknown; setVisible(v: boolean): unknown;
+};
+/** Kotwica obiektu względem osi obrotu w przestrzeni siatki (y x2 = odwrócony rzut 2:1) + przesunięcie obrazka od kotwicy. */
+interface SpinEntry { o: SpinObj; rx: number; ry: number; dx: number; dy: number; a: number }
+interface Spin {
+  t: number; dur: number; full: number; px: number; py: number;
+  /** przewijanie kamery: start (bez granic) -> cel (w granicach) */
+  cam: { sx: number; sy: number; tx: number; ty: number };
+  old: SpinEntry[]; fresh: SpinEntry[]; moved: SpinEntry[]; hidden: { o: SpinObj; vis: boolean }[];
+}
 /** Pole siatki -> pole widoku (liniowe, działa też dla współrzędnych ułamkowych "pola"). */
 const toView = (gx: number, gy: number): [number, number] => {
   switch (VIEW.r) {
@@ -317,6 +331,8 @@ export class WorldScene extends Phaser.Scene {
   private extract: { caps: Phaser.GameObjects.Image[]; posts: Phaser.GameObjects.Image[]; beacon: Phaser.GameObjects.Container } | null = null;
   private floatStack = new Map<Actor, { t: number; n: number }>();
   private drag: { x: number; y: number; moved: boolean; btn: number } | null = null;
+  /** Trwająca animacja obrotu widoku (Q/E) - patrz rotateView / updateSpin. */
+  private spin: Spin | null = null;
 
   private get combat(): Combat {
     return this.mission.combat;
@@ -359,6 +375,7 @@ export class WorldScene extends Phaser.Scene {
     this.pathDots = [];
     this.costLabel = null;
     this.scorches = [];
+    this.spin = null;
     this.burning = new Map();
     this.geigerAt = 0;
     this.objDone = false;
@@ -677,6 +694,7 @@ export class WorldScene extends Phaser.Scene {
     this.updateCameraPan(dt);
     this.updateMarkers();
     this.updateExtraction();
+    this.updateSpin(delta / 1000);
   }
 
   private applySpeed(s: number): void {
@@ -1398,6 +1416,7 @@ export class WorldScene extends Phaser.Scene {
    */
   private rotateView(dir: 1 | -1): void {
     if (this.over || !this.cells.length) return;
+    this.finishSpin();
     // w trakcie animacji ruchu tweeny mają cele w starym rzucie - obracamy dopiero w spoczynku
     for (const u of this.units.values()) if (this.tweens.isTweening(u.sprite)) return;
     const cam = this.cameras.main;
@@ -1409,6 +1428,17 @@ export class WorldScene extends Phaser.Scene {
     const pvx = (b + a) / 2, pvy = (b - a) / 2;
     const [cgx, cgy] =
       VIEW.r === 1 ? [pvy, VIEW.h - pvx] : VIEW.r === 2 ? [VIEW.w - pvx, VIEW.h - pvy] : VIEW.r === 3 ? [VIEW.w - pvy, pvx] : [pvx, pvy];
+    // kierunek osi gx w starym rzucie (do wyznaczenia kąta obrotu animacji)
+    const o0 = gridPoint(cgx, cgy), o1 = gridPoint(cgx + 1, cgy);
+    const ox = mid.x, oy = mid.y;
+
+    // migawka sceny: co było przed przebudową (i gdzie), żeby potem odróżnić nowe / przesunięte / stare obiekty
+    const before = new Map<Phaser.GameObjects.GameObject, { x: number; y: number }>();
+    for (const o of this.children.list) {
+      const t = o as Partial<SpinObj>;
+      before.set(o, { x: t.x ?? 0, y: t.y ?? 0 });
+    }
+    const old: Phaser.GameObjects.GameObject[] = [];
 
     // stan zależny od rozgrywki, który trzeba odtworzyć po przebudowie
     const saved = this.cells.map((c) => ({ state: c.state, reveal: c.reveal }));
@@ -1417,12 +1447,10 @@ export class WorldScene extends Phaser.Scene {
     const finds = new Set(this.sparkles.keys());
     const hadObj = !!this.objMarker;
 
-    for (const c of this.cells) for (const img of c.imgs) img.destroy();
-    for (const l of this.glows) l.img.destroy();
-    if (this.extract) {
-      for (const o of [...this.extract.caps, ...this.extract.posts]) o.destroy();
-      this.extract.beacon.destroy();
-    }
+    // stary świat nie znika od razu - odjeżdża po łuku i gaśnie (updateSpin), potem jest niszczony
+    for (const c of this.cells) old.push(...c.imgs);
+    for (const l of this.glows) old.push(l.img);
+    if (this.extract) old.push(...this.extract.caps, ...this.extract.posts, this.extract.beacon);
     this.cells = [];
     this.tall = [];
     this.glows = [];
@@ -1505,16 +1533,107 @@ export class WorldScene extends Phaser.Scene {
     }
 
     this.setCameraBounds();
+    // środek ekranu zostaje na tym samym punkcie siatki (przy śledzeniu kamera dociągnie do postaci sama)
+    const n0 = gridPoint(cgx, cgy), n1 = gridPoint(cgx + 1, cgy);
+    // docelowe położenie kamery (z granicami); w trakcie obrotu kamera jest bez granic i płynnie tam dojeżdża
+    cam.stopFollow();
     if (this.following) cam.centerOn(this.focus.sprite.x, this.focus.sprite.y - 8);
-    else {
-      const p = gridPoint(cgx, cgy);
-      cam.centerOn(p.x, p.y);
+    else cam.centerOn(n0.x, n0.y);
+    const tx = cam.scrollX, ty = cam.scrollY;
+    cam.removeBounds();
+    cam.centerOn(n0.x, n0.y);
+    this.startSpin({ sx: cam.scrollX, sy: cam.scrollY, tx, ty }, old, before, { x: ox, y: oy }, n0, Math.atan2((n1.y - n0.y) * 2, n1.x - n0.x) - Math.atan2((o1.y - o0.y) * 2, o1.x - o0.x));
+    SoundManager.sfx('click', { vol: 0.3 });
+  }
+
+  /**
+   * Animacja obrotu: obrót siatki o kąt `full` wokół środka ekranu, rzutowany izometrycznie (elipsa 2:1).
+   * Stary świat jedzie od 0 do `full` i gaśnie, nowy od `-full` do 0 i się pojawia; postacie jadą po łuku
+   * z dawnej pozycji do nowej. Grafiki bez pozycji (podgląd ścieżki, nakładki) są ukryte na czas obrotu.
+   */
+  private startSpin(
+    cam: Spin['cam'], oldObjs: Phaser.GameObjects.GameObject[], before: Map<Phaser.GameObjects.GameObject, { x: number; y: number }>,
+    oldPivot: { x: number; y: number }, pivot: { x: number; y: number }, full: number,
+  ): void {
+    full = Math.atan2(Math.sin(full), Math.cos(full));
+    const isOld = new Set(oldObjs);
+    const entry = (o: SpinObj, px: number, py: number): SpinEntry => {
+      // kotwica = środek podstawy (dół obrazka - pół kafla); dla obiektów bez rozmiaru sama pozycja
+      let ax = o.x, ay = o.y;
+      if (o instanceof Phaser.GameObjects.Image) {
+        const w = o.displayWidth, h = o.displayHeight;
+        ax = o.x - o.originX * w + w / 2;
+        ay = o.y - o.originY * h + h - TILE_H / 2;
+      }
+      return { o, dx: o.x - ax, dy: o.y - ay, rx: ax - px, ry: (ay - py) * 2, a: o.alpha };
+    };
+    const spin: Spin = { t: 0, dur: 0.34, full, cam, px: pivot.x, py: pivot.y, old: [], moved: [], fresh: [], hidden: [] };
+    const movable = (o: Phaser.GameObjects.GameObject): o is SpinObj =>
+      !(o instanceof Phaser.GameObjects.Graphics) && typeof (o as Partial<SpinObj>).x === 'number' && (o as Partial<SpinObj>).scrollFactorX === 1;
+    for (const o of oldObjs) if (movable(o) && o.active) spin.old.push(entry(o, oldPivot.x, oldPivot.y));
+      else o.destroy();
+    for (const o of this.children.list) {
+      if (isOld.has(o) || (o as Partial<SpinObj>).scrollFactorX !== 1) continue;
+      const t = o as SpinObj;
+      if (!t.visible) continue;
+      const was = before.get(o);
+      if (!movable(o)) spin.hidden.push({ o: t, vis: true });
+      else if (!was) spin.fresh.push(entry(o, pivot.x, pivot.y));
+      else if (was.x !== o.x || was.y !== o.y) spin.moved.push(entry(o, pivot.x, pivot.y));
+      else spin.hidden.push({ o: t, vis: true });
     }
-    cam.resetFX();
-    cam.fadeIn(160, 0, 0, 0);
+    this.spin = spin;
+    this.applySpin(0);
+  }
+
+  private updateSpin(dt: number): void {
+    const s = this.spin;
+    if (!s) return;
+    s.t += dt;
+    if (s.t >= s.dur) this.finishSpin();
+    else this.applySpin(Phaser.Math.Easing.Sine.InOut(s.t / s.dur));
+  }
+
+  private applySpin(k: number): void {
+    const s = this.spin;
+    if (!s) return;
+    // nowy widok pojawia się wcześniej, niż gaśnie stary - teren nie prześwituje w połowie obrotu
+    const fadeIn = Phaser.Math.Clamp(k / 0.55, 0, 1), fadeOut = Phaser.Math.Clamp((k - 0.45) / 0.55, 0, 1);
+    const put = (e: SpinEntry, ang: number, alpha: number): void => {
+      const c = Math.cos(ang), sn = Math.sin(ang);
+      e.o.x = s.px + e.rx * c - e.ry * sn + e.dx;
+      e.o.y = s.py + (e.rx * sn + e.ry * c) / 2 + e.dy;
+      if (alpha >= 0) e.o.setAlpha(e.a * alpha);
+    };
+    for (const e of s.old) put(e, s.full * k, 1 - fadeOut);
+    for (const e of s.fresh) put(e, s.full * (k - 1), fadeIn);
+    for (const e of s.moved) if (!this.tweens.isTweening(e.o)) put(e, s.full * (k - 1), -1);
+    for (const h of s.hidden) h.o.setVisible(false);
+    this.cameras.main.setScroll(s.cam.sx + (s.cam.tx - s.cam.sx) * k, s.cam.sy + (s.cam.ty - s.cam.sy) * k);
+  }
+
+  /** Koniec obrotu (także przerwany kolejnym Q/E): wszystko na docelowych miejscach, stary świat usunięty. */
+  private finishSpin(): void {
+    const s = this.spin;
+    if (!s) return;
+    this.spin = null;
+    for (const e of s.old) e.o.destroy();
+    const home = (e: SpinEntry): void => {
+      e.o.x = s.px + e.rx + e.dx;
+      e.o.y = s.py + e.ry / 2 + e.dy;
+    };
+    for (const e of s.fresh) {
+      if (!e.o.active) continue;
+      home(e);
+      e.o.setAlpha(e.a);
+    }
+    for (const e of s.moved) if (e.o.active && !this.tweens.isTweening(e.o)) home(e);
+    for (const h of s.hidden) if (h.o.active) h.o.setVisible(h.vis);
+    this.cameras.main.setScroll(s.cam.tx, s.cam.ty);
+    this.setCameraBounds();
+    if (this.following) this.focusOn(this.focus);
     this.refreshOverlay();
     this.refreshPathPreview();
-    SoundManager.sfx('click', { vol: 0.3 });
   }
 
   /** Granice kamery w przestrzeni widoku (po obrocie W i H mogą się zamienić). */
@@ -3199,6 +3318,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private refreshPathPreview(): void {
+    if (this.spin) return;
     const sel = this.selected;
     this.aimGfx?.clear();
     this.laserGfx?.clear();
