@@ -38,13 +38,13 @@ try {
   process.exit(1);
 }
 
-// Wersja jak w grze (vite.config.ts): liczba merge'y na main + 6 (VERSION_OFFSET), fallback package.json.
+// Wersja jak w grze (vite.config.ts): liczba merge'y na main, fallback package.json.
 let version;
 try {
   const merges = Number(execSync('git rev-list --count --merges --first-parent HEAD', { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim());
-  version = String(merges + 6);
+  version = `${Math.floor(merges / 10)}.${merges % 10}`;
 } catch {
-  version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version.split('.')[0];
+  version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version.split('.').slice(0, 2).join('.');
 }
 
 // Względne ścieżki (--base=./): build działa niezależnie od ścieżki serwera.
