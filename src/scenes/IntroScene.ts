@@ -14,7 +14,10 @@ import {
 } from './ui/Kit';
 import { MOODS, backdrop } from './fx/Backdrops';
 import {
-  Birds, DriftLayer, LightRays, ParallaxLayer, clouds, css, ditherGradient, glow, ground, haze, line, mix, poly, rimLight, ruins, stars, sun, vignette,
+  Circlers, FAUNA_PAL, FOLIAGE, SPRITES, Tumbleweed, Walker, burntTree, bush, cactus, dryShrub, glowShrooms, grass, ivy, leafyTree, pixelFrames, skeleton,
+} from './fx/Nature';
+import {
+  Birds, DriftLayer, deadTree, LightRays, streaks, ParallaxLayer, clouds, css, ditherGradient, glow, ground, haze, line, mix, poly, rimLight, ruins, stars, sun, vignette,
 } from './fx/Painter';
 
 // Wprowadzenie do świata (port Oldgame/src/scenes/intro.js): 6 animowanych plansz + narracja pisana "na maszynie".
@@ -193,6 +196,24 @@ export class IntroScene extends Phaser.Scene {
     const SPOTS = [[96, 196, -1.9, 0.9], [214, 198, -1.45, 1.3], [352, 197, -1.2, 0.7], [430, 196, -1.7, 1.1]] as const;
     const blinkers = [[121, 113], [236, 104], [288, 98], [417, 98], [440, 106]].map(([x, y]) => this.add.rectangle(x, y, 1, 1, 0xff3020).setDepth(1));
 
+    // pierwszy plan: park z drzewami nad brzegiem (przed wybuchem liście pod zmierzch, po fali - spalone kikuty)
+    const parkSpots = [18, 44, 70, 118, 150, 300, 334, 372, 404, 446, 470];
+    const park = this.add.image(0, 0, this.tex('intro_bomb_park', BASE_W, BASE_H, (g) => {
+      const r = seeded(91);
+      for (const x of parkSpots) leafyTree(g, x, 206, 16 + r() * 12, r, { ...FOLIAGE.night, lit: '#4a3a4a', hi: '#8a5a5a', trunkLit: '#5a3a3a' }, 1);
+      for (let x = 0; x < BASE_W; x += 4 + Math.floor(r() * 6)) bush(g, x, 207, 2 + r() * 2, r, FOLIAGE.night);
+    })).setOrigin(0).setDepth(1.5);
+    const burnt = this.add.image(0, 0, this.tex('intro_bomb_burnt', BASE_W, BASE_H, (g) => {
+      const r = seeded(92);
+      for (const x of parkSpots) burntTree(g, x, 206, 14 + r() * 10, r);
+      grass(g, 240, 206, 30, 2, r, '#0c0808', '#1a1010', '#3a2018');
+    })).setOrigin(0).setDepth(1.5).setVisible(false);
+    // auta na estakadzie (światła), przed wybuchem
+    const cars = this.add.graphics().setDepth(1.4);
+    const CARS = Array.from({ length: 9 }, (_, i) => ({ x: (i * 61) % BASE_W, v: (i % 2 ? -1 : 1) * (14 + (i % 3) * 5) }));
+    // stado ptaków nad parkiem: spokojny lot przed uderzeniem, spłoszone zrywa się przy błysku
+    const flock = new Birds(this, 7, { x: 0, y: 150, w: BASE_W, h: 30 }, 0x120c16, 1.6, 31, -1);
+
     // rakiety: jasna głowica z płomieniem silnika, za nią smuga dymu, która rośnie i blednie
     const trail = this.add.graphics().setDepth(2);
     const heads = this.add.graphics().setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
@@ -263,6 +284,19 @@ export class IntroScene extends Phaser.Scene {
 
       const k = tq - BOOM;
       blast.render(k / SEC);
+      // drzewa w parku płoną w chwili przejścia fali (po bieli)
+      const scorched = k > secToQ8(0.42);
+      park.setVisible(!scorched);
+      burnt.setVisible(scorched);
+      cars.clear();
+      if (pre) for (const c of CARS) {
+        c.x = (c.x + c.v * dt + BASE_W + 20) % (BASE_W + 20);
+        const y = c.v > 0 ? 201 : 203;
+        cars.fillStyle(c.v > 0 ? 0xfff0c0 : 0xff3020, 1).fillRect(Math.round(c.x) - 10, y, 2, 1);
+        cars.fillStyle(c.v > 0 ? 0xfff0c0 : 0xff3020, 0.35).fillRect(Math.round(c.x) - 10 + (c.v > 0 ? 2 : -4), y, 4, 1);
+      }
+      if (k > 0) flock.speedK = 6;
+      flock.update(t, dt);
       // czysta biel przez ~0.1 s (kilka klatek), dalej błysk rysuje już NukeBlast (sylwetki, gasnąca poświata)
       this.flash.setAlpha(k > 0 && k < secToQ8(0.1) ? 1 : 0);
       ash.update(k > secToQ8(3) ? dt : 0);
@@ -293,6 +327,27 @@ export class IntroScene extends Phaser.Scene {
       const gap = Math.max(2, Math.round(8 / z));
       return { a: this.add.rectangle(x - gap / 2, y, 1, 1, col).setDepth(2), b: this.add.rectangle(x + gap / 2, y, 1, 1, col).setDepth(2), ph: ph.below(256) };
     });
+    // roślinność Rdzawiska: chwasty z pęknięć, krzaki przy chodnikach, zmutowane świecące grzyby, uschnięte drzewo;
+    // obraz w kontenerze tła, więc przybliża się razem z ulicą
+    const flora = this.tex('intro_ruins_flora', BASE_W, BASE_H, (g) => {
+      const r = seeded(25), T = FOLIAGE.toxic;
+      deadTree(g, 62, 184, 46, r, '#141a14', '#5a6a4a', 1);
+      leafyTree(g, 420, 190, 34, r, T, 1);
+      for (const [x, y, rr] of [[18, 196, 5], [110, 182, 4], [150, 176, 3], [346, 178, 3], [384, 186, 5], [462, 198, 5], [470, 176, 4]] as const) bush(g, x, y, rr, r, T, 1);
+      for (let k = 0; k < 46; k++) {
+        const left = r() < 0.5;
+        const x = left ? 4 + r() * 170 : 310 + r() * 166, y = 160 + r() * 44;
+        grass(g, x, y, 2 + Math.floor(r() * 4), 2 + r() * 4, r, T.shade, T.mid, T.hi);
+      }
+      for (let k = 0; k < 14; k++) grass(g, 205 + r() * 70, 150 + r() * 54, 2, 2 + r() * 2, r, T.shade, T.mid, T.lit); // chwasty w szczelinach jezdni
+      glowShrooms(g, 132, 192, 4, r);
+      glowShrooms(g, 360, 196, 3, r, '#80ffd0', '#2a4a40');
+      glowShrooms(g, 30, 176, 3, r);
+    });
+    img.add(this.add.image(-VX, -VY, flora).setOrigin(0));
+    // szczury przebiegające przez jezdnię (w kontenerze - współrzędne względem punktu zaczepienia)
+    const rats = [new Walker(this, 'rat', 150 - VX, 330 - VX, 199 - VY, 3, FAUNA_PAL.rat, 1), new Walker(this, 'rat', 60 - VX, 170 - VX, 186 - VY, 3, FAUNA_PAL.rat, 2)];
+    for (const rt of rats) img.add(rt.image);
     const ash = new Motes(this, 140, { x: 0, y: 0, w: BASE_W, h: BASE_H }, 0xb0c0a0, 3, 9, 2, 0.6);
     // ciężka, toksyczna mgła snująca się nisko nad ulicą (dwie warstwy w przeciwnych kierunkach) i krążące kruki
     const fogTex = (key: string, seed: number): string => this.tex(key, BASE_W, 90, (g, w, h) => {
@@ -317,6 +372,7 @@ export class IntroScene extends Phaser.Scene {
       fog1.update(dt);
       fog2.update(dt);
       crows.update(tq / SEC, dt);
+      for (const rt of rats) rt.update(tq / SEC, dt);
     });
   }
 
@@ -344,7 +400,9 @@ export class IntroScene extends Phaser.Scene {
     });
     const sky = new ParallaxLayer(this, 'intro_raiders_sky', 0.1, M, 0);
     this.tex('intro_raiders_smoke', BASE_W, 120, (g, w, h) => {
-      clouds(g, w, h, seeded(42), [[60, 40, 160, 12], [300, 26, 200, 10], [420, 70, 140, 9], [180, 84, 120, 8]], { tones: ['#a04a30', '#5a2a24', '#2e161a', '#160c12'], light: 0, wrap: true });
+      const r = seeded(42);
+      clouds(g, w, h, r, [[60, 44, 110, 22], [300, 34, 130, 20], [430, 76, 90, 16], [190, 88, 80, 14]], { tones: ['#c06a3a', '#6a3026', '#36181c', '#1a0c12'], light: 0, wrap: true });
+      streaks(g, w, r, 60, 112, 10, ['#8a3a26', '#4a2020', '#26121a'], true);
     });
     const smoke = new DriftLayer(this, 'intro_raiders_smoke', BASE_W, -3, 0, 0, 0.85);
     this.tex('intro_raiders_far', BASE_W + 2 * M, BASE_H, (g, w) => {
@@ -404,6 +462,19 @@ export class IntroScene extends Phaser.Scene {
         g.fillStyle = k % 2 ? '#2a1a12' : '#3a2418';
         g.fillRect(Math.round(ox + FX + Math.cos(a) * 12) - 1, Math.round(FY + 1 + Math.sin(a) * 3), 3, 2);
       }
+      // uschnięte drzewa, kolczaste krzaki i kępy suchej trawy wokół obozu
+      deadTree(g, ox + 22, 170, 54, r, '#120a0a', undefined, 1);
+      deadTree(g, ox + 452, 168, 44, r, '#120a0a', undefined, -1);
+      for (let k = 0; k < 9; k++) {
+        const x = ox + 10 + r() * 460;
+        if (Math.abs(x - ox - FX) < 50) continue;
+        dryShrub(g, x, 170 + r() * 26, 4 + r() * 5, r, '#1a100c', '#3a2418');
+      }
+      for (let k = 0; k < 40; k++) {
+        const x = ox + r() * 480;
+        if (Math.abs(x - ox - FX) < 30) continue;
+        grass(g, x, 166 + r() * 36, 3, 2 + r() * 3, r, '#140c0a', '#2a1a12', '#4a2e1a');
+      }
       rimLight(g, ox + FX, FY - 6, '#ff9a4a', 230, 0.95, 2);
       glow(g, ox + FX, FY + 2, 120, 26, '#ff7a30', 0.32, { levels: 5 });
       vignette(g, w, h, '#000000', 0.6, 0.45);
@@ -430,6 +501,13 @@ export class IntroScene extends Phaser.Scene {
     });
     const shadows = members.map((m) => this.add.ellipse(m.x + (m.x - FX) * 0.25, m.y + 1, 22, 4, 0x000000, 0.45).setDepth(2.5));
     const sparks = new Motes(this, 46, { x: FX - 20, y: 100, w: 40, h: 80 }, 0xffb050, 2, -26, 3, 0.95, 6);
+    // fauna obozu: szczury przy beczkach, biegacz pustyni toczony wiatrem, kruki krążące nad łuną
+    const critters = [
+      new Walker(this, 'rat', 320, 372, 197, 4.5, FAUNA_PAL.rat, 1),
+      new Walker(this, 'rat', 60, 110, 190, 2.6, FAUNA_PAL.rat, 3),
+      new Tumbleweed(this, 199, BASE_W, 4.8, '#3a2418', '#6a4024', 22, -40),
+      new Circlers(this, 'crow', 3, 300, 70, 46, 1, FAUNA_PAL.crowDusk),
+    ];
     const ash = new Motes(this, 40, { x: 0, y: 0, w: BASE_W, h: 200 }, 0x8a6a60, 6, 6, 11, 0.4, 6);
     const W_FLICK = angQ8(11), W_FLAG = angQ8(4);
     this.updaters.push((tq, dt) => {
@@ -442,6 +520,7 @@ export class IntroScene extends Phaser.Scene {
       fire(t);
       sparks.update(dt);
       ash.update(dt);
+      for (const c of critters) c.update(t, dt);
       const flick = 210 + ((wave(tq, W_FLICK) * 46) >> 14); // 0.82 ± 0.18 w Q8
       fireGlow.setAlpha(0.55 + (flick - 210) / 120 + Math.sin(t * 23) * 0.06).setScale(1 + (flick - 210) / 900);
       for (const m of members) m.setTint(Phaser.Display.Color.GetColor((255 * flick) >> 8, (175 * flick) >> 8, (130 * flick) >> 8));
@@ -473,7 +552,9 @@ export class IntroScene extends Phaser.Scene {
     });
     const sky = new ParallaxLayer(this, 'intro_nomads_sky', 0.05, M, 0);
     this.tex('intro_nomads_clouds', BASE_W, 120, (g, w, h) => {
-      clouds(g, w, h, seeded(52), [[40, 30, 180, 8], [260, 48, 220, 9], [420, 20, 120, 6], [150, 84, 160, 6], [350, 96, 140, 5]], { tones: ['#ffe0a0', '#f09a62', '#b45a58', '#6a3450'], light: -1, wrap: true });
+      const r = seeded(52);
+      clouds(g, w, h, r, [[40, 34, 120, 20], [280, 46, 140, 22], [430, 22, 80, 14]], { tones: ['#ffe0a0', '#f09a62', '#b45a58', '#6a3450'], light: -1, wrap: true });
+      streaks(g, w, r, 70, 116, 14, ['#ffd090', '#e08a5a', '#a04a4a'], true);
     });
     const cl = new DriftLayer(this, 'intro_nomads_clouds', BASE_W, 1.6, 0, 0, 0.92);
     const rays = new LightRays(this, SX, SY, 10, 0xffd090, -Math.PI * 0.98, -Math.PI * 0.02, 380, 0, 0.032, 4);
@@ -504,6 +585,12 @@ export class IntroScene extends Phaser.Scene {
       ground(g, w, h, 158, { crest: '#f8c080', body: '#c4743c', deep: '#a0582e', amp: 6, freq: 0.013, seed: 1, debris: 0, rnd: r });
       ground(g, w, h, 174, { crest: '#f0a868', body: '#a45a30', deep: '#7a3e22', amp: 5, freq: 0.02, seed: 3, debris: 0.05, rnd: r });
       glow(g, SX + M, 160, 140, 14, '#ffd090', 0.35, { levels: 5 });
+      // kaktusy i suche krzaki na grzbietach wydm (pod światło: ciemne, jasna krawędź od słońca)
+      for (const [x, y, hh] of [[M + 300, 176, 22], [M + 330, 162, 12], [M + 70, 164, 14], [M + 430, 180, 28]] as const) cactus(g, x, y, hh, r, '#3a2014', '#5a3018', '#d08048');
+      for (let k = 0; k < 12; k++) {
+        const x = r() * w;
+        dryShrub(g, x, (k % 2 ? 160 : 176) + r() * 3, 3 + r() * 4, r, '#5a2e18', '#e09a5a');
+      }
     });
     const dunes1 = new ParallaxLayer(this, 'intro_nomads_dunes', 0.35, M, 0);
     this.tex('intro_nomads_near', BASE_W + 2 * M, BASE_H, (g, w, h) => {
@@ -518,6 +605,10 @@ export class IntroScene extends Phaser.Scene {
       g.fillRect(M + 60, 224, 7, 2);
       g.fillRect(M + 58, 222, 2, 2);
       g.fillRect(M + 66, 226, 2, 2);
+      skeleton(g, M + 40, 202, '#f0dcb8', '#6a3a20');
+      for (let k = 0; k < 24; k++) grass(g, r() * w, 200 + r() * 6, 3, 2 + r() * 4, r, '#4a2414', '#8a4a24', '#f0b070');
+      dryShrub(g, M + 18, 202, 8, r, '#3a1c10', '#e09058');
+      cactus(g, M + 470, 204, 26, r, '#2a140a', '#4a2414', '#e09058');
       vignette(g, w, h, '#1a0a10', 0.45, 0.6);
     });
     const near = new ParallaxLayer(this, 'intro_nomads_near', 1, M, 6);
@@ -568,6 +659,10 @@ export class IntroScene extends Phaser.Scene {
     };
     const dust = new Motes(this, 110, { x: 0, y: 120, w: BASE_W, h: 110 }, 0xf8d090, 16, 1, 5, 0.5);
     const heat = new Motes(this, 40, { x: 0, y: 150, w: BASE_W, h: 40 }, 0xfff0c0, 4, -2, 9, 0.25, 1);
+    const critters = [
+      new Circlers(this, 'vulture', 3, 360, 62, 44, 1, FAUNA_PAL.vultureDusk),
+      new Tumbleweed(this, 201, BASE_W, 5, '#6a3a1c', '#c08048', 30, 120),
+    ];
     this.updaters.push((tq, dt) => {
       const t = tq / SEC;
       const p = IntroScene.pan(t, -20, 20, 20);
@@ -579,6 +674,7 @@ export class IntroScene extends Phaser.Scene {
       rays.update(t);
       dust.update(dt);
       heat.update(dt);
+      for (const c of critters) c.update(t, dt);
       cg.clear();
       const lead = 150 + t * 8 - p * 0.6;
       for (const [kind, off, i] of slots) {
@@ -601,7 +697,9 @@ export class IntroScene extends Phaser.Scene {
     });
     const sky = new ParallaxLayer(this, 'intro_haven_sky', 0.08, M, 0);
     this.tex('intro_haven_clouds', BASE_W, 110, (g, w, h) => {
-      clouds(g, w, h, seeded(32), [[80, 30, 150, 8], [330, 50, 200, 9], [200, 86, 160, 7]], { tones: ['#b0b8d8', '#5a6490', '#2c3460', '#161c3a'], light: 1, wrap: true });
+      const r = seeded(32);
+      clouds(g, w, h, r, [[80, 34, 110, 20], [330, 50, 130, 22], [200, 88, 90, 14]], { tones: ['#c8d0f0', '#6a74a0', '#343c68', '#1a2040'], light: 1, wrap: true });
+      streaks(g, w, r, 60, 104, 8, ['#5a6490', '#2c3460', '#161c3a'], true);
     });
     const cl = new DriftLayer(this, 'intro_haven_clouds', BASE_W, 2, 0, 0, 0.75);
     this.tex('intro_haven_far', BASE_W + 2 * M, BASE_H, (g, w) => {
@@ -619,7 +717,12 @@ export class IntroScene extends Phaser.Scene {
         const lit = x > 40 ? 0.15 : x < -60 ? -0.2 : 0;
         g.fillStyle = css(mix('#4a3a34', x > 0 ? '#8a7060' : '#1e1818', Math.abs(lit) * 2 + 0.1));
         g.fillRect(ox + 240 + x, top, 1, 151 - top);
-        if ((x + 108) % 9 === 0) { g.fillStyle = '#2a2220'; g.fillRect(ox + 240 + x, top, 1, 151 - top); }
+        // blacha falista: pary żeber jasne / ciemne, rdzawe łaty, rząd nitów na wiązaniach
+        const rib = (x + 108) % 6;
+        if (rib === 0) { g.fillStyle = css(mix('#2a2220', '#4a3a34', 0.2)); g.fillRect(ox + 240 + x, top, 1, 151 - top); }
+        if (rib === 1) { g.fillStyle = css(mix('#7a6a5a', x > 0 ? '#a08a70' : '#4a3e36', 0.5)); g.fillRect(ox + 240 + x, top + 1, 1, 150 - top); }
+        if (r() < 0.04) { g.fillStyle = '#6a3a22'; g.fillRect(ox + 240 + x, top + 3 + Math.floor(r() * (146 - top)), 1, 2 + Math.floor(r() * 5)); }
+        for (const yy of [130, 142]) if (yy > top + 2 && (x + 108) % 6 === 3) { g.fillStyle = '#1a1614'; g.fillRect(ox + 240 + x, yy, 1, 1); }
         g.fillStyle = '#8a7a6a';
         g.fillRect(ox + 240 + x, top, 1, 1);
       }
@@ -670,6 +773,13 @@ export class IntroScene extends Phaser.Scene {
         g.fillStyle = '#2a2420'; g.fillRect(ox + x - 13, 100, 2, 12); g.fillRect(ox + x + 11, 100, 2, 12); g.fillRect(ox + x - 15, 98, 30, 3);
         g.fillStyle = '#fff0a0'; g.fillRect(ox + x - 4, 104, 8, 6);
       }
+      // drzewa zza muru (sad Przystani), bluszcz na murze i wieżach, krzaki i trawa przed murem
+      for (const [x, hh] of [[100, 34], [120, 26], [362, 30], [384, 36]] as const) leafyTree(g, ox + x, 178, hh, r, { ...FOLIAGE.night, lit: '#4a5a3a', hi: '#8a8a4a' }, 1);
+      ivy(g, ox + 60, ox + 120, 179, 14, r, '#1a2a1a', '#3a5a2a');
+      ivy(g, ox + 330, ox + 400, 179, 12, r, '#1a2a1a', '#3a5a2a');
+      ivy(g, ox + 66, ox + 74, 119, 30, r, '#1a2a1a', '#3a5a2a');
+      for (let k = 0; k < 8; k++) bush(g, ox + 20 + r() * 440, 202, 2 + r() * 3, r, FOLIAGE.night, 1);
+      for (let k = 0; k < 30; k++) grass(g, ox + r() * 480, 198 + r() * 6, 3, 2 + r() * 3, r, '#141a14', '#2a3a24', '#5a6a3a');
       rimLight(g, ox + 240, 190, '#ffb060', 200, 0.6, 1);
       vignette(g, w, h, '#000004', 0.55, 0.5);
     });
@@ -686,6 +796,14 @@ export class IntroScene extends Phaser.Scene {
     });
     const smoke = new Motes(this, 46, { x: 150, y: 70, w: 18, h: 50 }, 0x8a8a98, 4, -10, 5, 0.45, 1.2);
     const embers = new Motes(this, 30, { x: 0, y: 150, w: BASE_W, h: 70 }, 0xffb060, 3, -8, 8, 0.6, 6);
+    // życie w osadzie: pies obchodzi mur, kury dziobią przy bramie, kot na blankach
+    const critters = [
+      new Walker(this, 'dog', 30, 150, 203, 4.5, FAUNA_PAL.dogNight, 1),
+      new Walker(this, 'hen', 330, 352, 203, 4.5, FAUNA_PAL.hen, 2),
+      new Walker(this, 'hen', 356, 380, 203, 4.5, FAUNA_PAL.hen, 3),
+    ];
+    const cat = this.add.image(0, 174, pixelFrames(this, 'fauna_cat', SPRITES.CAT, FAUNA_PAL.cat)[0]).setOrigin(0.5, 1).setDepth(1.2);
+    const catKeys = pixelFrames(this, 'fauna_cat', SPRITES.CAT, FAUNA_PAL.cat);
     this.updaters.push((tq, dt) => {
       const t = tq / SEC;
       const p = IntroScene.pan(t, 10, -10, 18);
@@ -696,6 +814,12 @@ export class IntroScene extends Phaser.Scene {
       for (const f of fires) f(t);
       smoke.update(dt);
       embers.update(dt);
+      const off = -p * 0.5;
+      for (const c of critters) {
+        c.offset = off;
+        c.update(t, dt);
+      }
+      cat.setX(Math.round(300 + off)).setTexture(catKeys[Math.floor(t * 1.5) % 4 === 0 ? 1 : 0]);
       const fx = Math.round(-p * 0.5);
       beams.clear();
       [78, 402].forEach((x, i) => {
@@ -710,7 +834,11 @@ export class IntroScene extends Phaser.Scene {
 
   /** 6 - najemnicy na tle zachodzącego słońca: warstwowe ruiny, chmury, promienie, kruki. */
   private buildCrew(): void {
-    const upd = backdrop(this, 'intro_crew', { mood: MOODS.dusk, seed: 40, orb: [240, 148, 40], farBase: 186, midBase: 192, midH: [12, 64], groundY: 190, pan: 10 });
+    const upd = backdrop(this, 'intro_crew', {
+      mood: MOODS.dusk, seed: 40, orb: [240, 148, 40], farBase: 186, midBase: 192, midH: [12, 64], groundY: 190, pan: 10,
+      flora: { tones: FOLIAGE.dusk, density: 1.2, avoid: [[118, 362]] },
+      fauna: { crows: 2, circlers: 'vulture', avoid: [[118, 362]] },
+    });
     for (const k of ['sky', 'clouds', 'far', 'mid', 'ground']) this.bgKeys.push(`intro_crew_${k}`);
     RECRUITS.slice(0, 4).forEach((r, i) => {
       const s = addUnit(this, 150 + i * 60, 204, `rec_${r.id}`, unitLookOf(r), 'idle', 3).setDepth(4).setFlipX(i > 1);

@@ -4,7 +4,7 @@ import { type ResSetting, Settings, UI_ALPHAS, resPreset } from './Settings';
 import { FLAME_TONGUES, MoteField, Q12, Q8, TickClock, TypeProgress, flameKQ12, flameSwayQ8, glowAlphaQ8, potTiles, secToQ8 } from '../../core/frontend';
 import { PixelText, pixelText } from './BitmapFont';
 import { addHiRes } from '../iso/HiRes';
-import { ditherGradient, ground, mix, ruins } from '../fx/Painter';
+import { ditherGradient, glow, ground, mix, ruins } from '../fx/Painter';
 
 export { PixelText } from './BitmapFont';
 
@@ -477,19 +477,59 @@ export class Motes {
   }
 }
 
-/** Ognisko: migoczące płomienie z prostokątów + poświata. Zwraca funkcję aktualizującą (t w sekundach). Krzywe: core/frontend/fx.ts. */
+/**
+ * Ognisko w stylu pixel art: skrzyżowane polana z żarem, krąg kamieni, trzy języki ognia rysowane rzędami pikseli
+ * (czerwony brzeg -> pomarańcz -> żółć -> biały rdzeń), odrywające się iskierki i ditherowana poświata (ADD).
+ * Zwraca funkcję aktualizującą (t w sekundach). Wysokość i kołysanie języków: core/frontend/fx.ts.
+ */
 export function campfire(scene: Phaser.Scene, x: number, y: number, size = 1, depth = 4): (t: number) => void {
-  const glow = scene.add.ellipse(x, y - 2 * size, 46 * size, 22 * size, 0xff8a30, 0.16).setDepth(depth - 1);
-  scene.add.rectangle(x, y, 9 * size, 2 * size, 0x3a2410).setDepth(depth);
-  const cols = [0xc43d1a, 0xff8a30, 0xffc860, 0xfff0a0];
-  const tongues = cols.map((c, i) => scene.add.rectangle(x, y - 1, (7 - i * 1.6) * size, 4 * size, c).setOrigin(0.5, 1).setDepth(depth));
+  const s = size;
+  const gk = `campfire_glow_${Math.round(s * 10)}`;
+  if (!scene.textures.exists(gk)) canvasTexture(scene, gk, Math.round(64 * s), Math.round(32 * s), (g, w, h) => glow(g, w / 2, h / 2, w / 2, h / 2, '#ff8a30', 0.55, { levels: 5 }));
+  const halo = scene.add.image(x, y - 3 * s, gk).setDepth(depth - 1).setBlendMode(Phaser.BlendModes.ADD);
+  const R = (v: number): number => Math.round(v);
+  const base = scene.add.graphics().setDepth(depth);
+  // kamienie (tył), polana na krzyż, kamienie (przód)
+  for (let k = -3; k <= 3; k++) base.fillStyle(k % 2 ? 0x4a3e36 : 0x5a4c40, 1).fillRect(R(x + k * 2.2 * s) - 1, R(y - 1 - (3 - Math.abs(k)) * 0.4 * s), R(2 * s) || 1, 1);
+  for (let k = 0; k < R(10 * s); k++) {
+    const lx = R(x - 5 * s + k), ly1 = R(y - 1 - k * 0.25), ly2 = R(y - 1 - (R(10 * s) - k) * 0.25);
+    base.fillStyle(0x3a2212, 1).fillRect(lx, ly1, 1, R(2 * s) || 1).fillRect(lx, ly2, 1, R(2 * s) || 1);
+    base.fillStyle(0x6a4020, 1).fillRect(lx, ly1, 1, 1);
+  }
+  for (let k = -4; k <= 4; k += 2) base.fillStyle(0x2a2420, 1).fillRect(R(x + k * 1.6 * s), R(y + 1), R(2 * s) || 1, 1);
+  const embers = scene.add.graphics().setDepth(depth);
+  const fl = scene.add.graphics().setDepth(depth);
+  const hash = (a: number, b: number, c: number): number => {
+    const v = Math.sin(a * 12.9898 + b * 78.233 + c * 37.719) * 43758.5453;
+    return v - Math.floor(v);
+  };
   return (t: number) => {
     const tq8 = secToQ8(t);
-    for (let i = 0; i < FLAME_TONGUES; i++) {
-      const k = flameKQ12(tq8, i) / Q12;
-      tongues[i].setSize((7 - i * 1.6) * size, Math.max(1, (9 - i * 2) * size * k));
-      tongues[i].x = x + (flameSwayQ8(tq8, i) * size) / Q8;
+    const f = Math.floor(t * 12);
+    fl.clear();
+    embers.clear();
+    // żar na polanach
+    for (let k = 0; k < 4; k++) if (hash(k, f >> 1, 3) > 0.4) embers.fillStyle(hash(k, f, 4) > 0.5 ? 0xffa040 : 0xc43d1a, 1).fillRect(R(x - 3 * s + k * 2 * s), R(y - 2), 1, 1);
+    // języki: lewy, prawy, środkowy (najwyższy, rysowany na wierzchu)
+    for (const i of [0, 2, 1]) {
+      const k = flameKQ12(tq8, i % FLAME_TONGUES) / Q12;
+      const sway = (flameSwayQ8(tq8, i % FLAME_TONGUES) * s) / Q8;
+      const H = Math.max(2, R((i === 1 ? 10 : 6) * s * k));
+      const W0 = (i === 1 ? 6 : 4) * s;
+      const cx = x + (i - 1) * 2.4 * s;
+      for (let j = 0; j < H; j++) {
+        const u = j / H;
+        const w = Math.max(1, R(W0 * Math.pow(1 - u, 0.75)));
+        const xo = R(cx - w / 2 + sway * u * 1.4 + (hash(j, f, i) > 0.78 ? 1 : 0));
+        const yy = R(y - 2 - j);
+        fl.fillStyle(u > 0.55 ? 0xb8301a : 0xe0601e, 1).fillRect(xo, yy, w, 1);
+        if (w > 2) fl.fillStyle(u > 0.6 ? 0xff8a30 : 0xffa840, 1).fillRect(xo + 1, yy, w - 2, 1);
+        if (w > 4 && u < 0.55) fl.fillStyle(0xffd860, 1).fillRect(xo + 2, yy, w - 4, 1);
+        if (w > 5 && u < 0.3) fl.fillStyle(0xfff4c0, 1).fillRect(xo + 3, yy, w - 6 || 1, 1);
+      }
+      // odrywający się płomyk nad czubkiem
+      if (hash(i, f, 7) > 0.55) fl.fillStyle(0xff8a30, 1).fillRect(R(cx + sway * 1.5), R(y - 3 - H - hash(i, f, 8) * 3 * s), 1, 1);
     }
-    glow.setAlpha(glowAlphaQ8(tq8) / Q8);
+    halo.setAlpha(glowAlphaQ8(tq8) / Q8 * 3.2).setScale(1 + (hash(f, 1, 2) - 0.5) * 0.06);
   };
 }

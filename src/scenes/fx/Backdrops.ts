@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
+import { Circlers, type Critter, FAUNA_PAL, type FoliageTones, Walker, bush, dryShrub, grass, leafyTree } from './Nature';
 import { BASE_H, BASE_W, type Ctx2D, canvasTexture, seeded } from '../ui/Kit';
 import {
-  Birds, type ColorIn, css, DriftLayer, LightRays, ParallaxLayer, Windows, clouds, ditherGradient, glow, ground, haze, mix, num, ruins, stars, sun, vignette,
+  Birds, type ColorIn, css, deadTree, streaks, DriftLayer, LightRays, ParallaxLayer, Windows, clouds, ditherGradient, glow, ground, haze, mix, num, ruins, stars, sun, vignette,
 } from './Painter';
 
 // Wspólne, warstwowe tła scen menu (tytuł, werbunek, Przystań, podsumowanie, zakończenia).
@@ -122,6 +123,10 @@ export interface BackdropOptions {
   /** Dodatkowe malowanie na warstwie gruntu (rekwizyty pierwszego planu). */
   props?: (g: Ctx2D, w: number, h: number, profile: number[]) => void;
   vignette?: number;
+  /** Roślinność na pierwszym planie (drzewa, krzaki, trawa); `avoid` - przedziały x bez roślin (postaci, napisy). */
+  flora?: { tones: FoliageTones; density?: number; avoid?: [number, number][]; dead?: boolean };
+  /** Zwierzęta: kruki na ziemi i krążące ptaki. */
+  fauna?: { crows?: number; circlers?: 'vulture' | 'crow'; avoid?: [number, number][] };
 }
 
 const M = 24; // zapas warstw paralaksy z każdej strony
@@ -146,12 +151,14 @@ export function backdrop(scene: Phaser.Scene, key: string, o: BackdropOptions): 
   canvasTexture(scene, `${key}_clouds`, W, Math.round(H * 0.6), (g, w, h) => {
     const r = seeded(o.seed + 2);
     const list: [number, number, number, number][] = [];
-    for (let i = 0; i < nc; i++) {
-      const y = 18 + r() * (h - 40);
-      const s = 0.5 + (y / h) * 0.9;
-      list.push([r() * w, y, (70 + r() * 90) * s, (6 + r() * 8) * s]);
+    // kilka dużych cumulusów wyżej + smugi chmur warstwowych nisko nad horyzontem
+    for (let i = 0; i < Math.ceil(nc / 2); i++) {
+      const y = 26 + r() * (h * 0.45);
+      const s = 0.65 + (y / h) * 0.6;
+      list.push([((i + r() * 0.6) / Math.ceil(nc / 2)) * w, y, (60 + r() * 70) * s, (13 + r() * 9) * s]);
     }
     clouds(g, w, h, r, list, { tones: md.cloud, light: sx < W / 2 ? -1 : 1, wrap: true });
+    streaks(g, w, r, h * 0.55, h * 0.92, nc * 2, [md.cloud[0], md.cloud[1], md.cloud[2]], true);
   });
   const cl = new DriftLayer(scene, `${key}_clouds`, W, 2.2, 0, 0, md.cloudA);
 
@@ -184,16 +191,57 @@ export function backdrop(scene: Phaser.Scene, key: string, o: BackdropOptions): 
   // 6) ptaki
   const birds = md.birds ? new Birds(scene, 5, { x: 0, y: 40, w: W, h: 60 }, md.birds, 0, o.seed + 4) : null;
 
-  // 7) grunt + rekwizyty
+  // 7) grunt + rekwizyty + flora
+  let groundY = (_x: number): number => gY;
   canvasTexture(scene, `${key}_ground`, W, H, (g, w, h) => {
     const r = seeded(o.seed + 5);
-    ground(g, w, h, gY, { crest: md.groundCrest, body: md.ground, deep: md.groundDeep, amp: 3, freq: 0.022, seed: o.seed, debris: 0.25, rnd: r });
+    const p1 = ground(g, w, h, gY, { crest: md.groundCrest, body: md.ground, deep: md.groundDeep, amp: 3, freq: 0.022, seed: o.seed, debris: 0.25, rnd: r });
+    groundY = (x: number): number => p1[Math.max(0, Math.min(w - 1, Math.round(x)))];
     const p2 = ground(g, w, h, gY + 18, { crest: mix(md.groundCrest, md.ground, 0.4), body: mix(md.ground, md.groundDeep, 0.45), deep: md.groundDeep, amp: 4, freq: 0.035, seed: o.seed + 3, debris: 0.4, rnd: r });
     if (md.orb) glow(g, sx, gY + 2, sr * 3, 6, md.orb.halo, 0.25, { levels: 4 });
+    if (o.flora) {
+      const f = o.flora, fr = seeded(o.seed + 11), dens = f.density ?? 1;
+      const free = (x: number): boolean => x > 4 && x < w - 4 && !(f.avoid ?? []).some(([a, b]) => x >= a && x <= b);
+      const yAt = (x: number): number => groundY(x);
+      // drzewa w tle przy linii pierwszej wydmy, krzaki i trawa bliżej
+      for (let k = 0; k < Math.round(3 * dens); k++) {
+        const x = Math.round(fr() * w);
+        if (!free(x)) continue;
+        if (f.dead || fr() < 0.5) deadTree(g, x, yAt(x) + 1, 26 + fr() * 26, fr, f.tones.trunk, f.tones.trunkLit, sx < W / 2 ? -1 : 1);
+        else leafyTree(g, x, yAt(x) + 1, 26 + fr() * 18, fr, f.tones, sx < W / 2 ? -1 : 1);
+      }
+      for (let k = 0; k < Math.round(7 * dens); k++) {
+        const x = Math.round(fr() * w);
+        if (!free(x)) continue;
+        if (f.dead) dryShrub(g, x, yAt(x) + 2, 5 + fr() * 6, fr, f.tones.trunk, f.tones.trunkLit ?? f.tones.lit);
+        else bush(g, x, yAt(x) + 2, 3 + fr() * 4, fr, f.tones, sx < W / 2 ? -1 : 1);
+      }
+      for (let k = 0; k < Math.round(40 * dens); k++) {
+        const x = Math.round(fr() * w);
+        if (!free(x)) continue;
+        const y = fr() < 0.5 ? yAt(x) + 1 + Math.floor(fr() * 4) : p2[x] + 1 + Math.floor(fr() * 10);
+        grass(g, x, y, 3 + Math.floor(fr() * 5), 3 + fr() * 4, fr, f.tones.shade, f.dead ? f.tones.trunkLit ?? f.tones.mid : f.tones.mid, f.dead ? md.groundCrest : f.tones.lit);
+      }
+    }
     o.props?.(g, w, h, p2);
     if (o.vignette !== 0) vignette(g, w, h, md.vignette, o.vignette ?? 0.5);
   });
   scene.add.image(0, 0, `${key}_ground`).setOrigin(0).setDepth(0);
+
+  // fauna: kruki dreptające po ziemi, ptaki krążące wysoko
+  const critters: Critter[] = [];
+  if (o.fauna) {
+    const fr = seeded(o.seed + 13), pal = md === MOODS.night ? FAUNA_PAL.crow : FAUNA_PAL.crowDusk;
+    for (let k = 0; k < (o.fauna.crows ?? 2); k++) {
+      let x = 0;
+      for (let tries = 0; tries < 20; tries++) {
+        x = Math.round(20 + fr() * (W - 40));
+        if (!(o.fauna.avoid ?? []).some(([a, b]) => x >= a - 10 && x <= b + 10)) break;
+      }
+      critters.push(new Walker(scene, 'crow', x - 6, x + 6, groundY(x) + 2, 0, pal, k + 1));
+    }
+    if (o.fauna.circlers) critters.push(new Circlers(scene, o.fauna.circlers, 3, sx < W / 2 ? W * 0.7 : W * 0.3, 52, 40, 0, o.fauna.circlers === 'vulture' ? FAUNA_PAL.vultureDusk : pal));
+  }
 
   const pan = o.pan ?? 14;
   return (t: number, dt: number) => {
@@ -205,6 +253,7 @@ export function backdrop(scene: Phaser.Scene, key: string, o: BackdropOptions): 
     rays?.update(t);
     birds?.update(t, dt);
     win?.update(t, mid.dx);
+    for (const c of critters) c.update(t, dt);
   };
 }
 

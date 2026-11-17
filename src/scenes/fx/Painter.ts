@@ -179,48 +179,64 @@ export interface CloudOptions {
   wrap?: boolean;
 }
 
-/** Chmury kłębiaste z płaskim spodem, cieniowane w 4 tonach. clouds: [cx, cy, szerokość, wysokość]. */
+/**
+ * Chmury kłębiaste w stylu ręcznie stawianych pikseli: każda chmura to kilka kłębów (koła) na płaskim spodzie.
+ * Piksel należy do kłębu "najbliżej widza" (niżej położony środek = bliżej), cieniowanie liczone z normalnej tego
+ * kłębu i kwantowane do 4 tonów bez szumu ditheringu (czyste plamy koloru). Górna krawędź każdego kłębu - także tam,
+ * gdzie zachodzi na kłąb za nim - dostaje jasny brzeg, więc widać pojedyncze "bąble"; spód jest płaski i ciemny.
+ * clouds: [cx, cy, szerokość, wysokość].
+ */
 export function clouds(g: Ctx2D, w: number, h: number, rnd: () => number, list: readonly (readonly [number, number, number, number])[], o: CloudOptions): void {
-  const m = new Uint8Array(w * h);
-  const disc = (cx: number, cy: number, rx: number, ry: number, flat: number): void => {
-    for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(h - 1, Math.ceil(Math.min(cy + ry, flat))); y++)
-      for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x++) {
-        const dx = (x + 0.5 - cx) / rx, dy = (y + 0.5 - cy) / ry;
-        if (dx * dx + dy * dy > 1) continue;
-        const xx = o.wrap ? ((x % w) + w) % w : x;
-        if (xx >= 0 && xx < w) m[y * w + xx] = 1;
-      }
-  };
+  type Puff = { x: number; y: number; r: number; flat: number };
+  const puffs: Puff[] = [];
   for (const [cx, cy, cw, ch] of list) {
-    const flat = cy + ch * 0.22;
-    const n = Math.max(3, Math.round(cw / (ch * 0.9)));
+    const flat = Math.round(cy + ch * 0.3);
+    const n = Math.max(3, Math.round(cw / (ch * 0.75)));
     for (let k = 0; k < n; k++) {
-      const u = n === 1 ? 0 : k / (n - 1) - 0.5;
-      const hk = ch * (0.55 + rnd() * 0.45) * (1 - Math.abs(u) * 0.9);
-      disc(cx + u * cw * 0.9 + (rnd() - 0.5) * 4, flat - hk * 0.7, hk * (1 + rnd() * 0.4), hk, flat);
+      const u = k / (n - 1) - 0.5; // -0.5..0.5
+      const r = Math.max(2, ch * (0.42 + rnd() * 0.3) * (1 - Math.abs(u) * 1.1));
+      puffs.push({ x: cx + u * cw * 0.92 + (rnd() - 0.5) * 3, y: flat - r * (0.35 + rnd() * 0.45), r, flat });
     }
-    disc(cx, flat - ch * 0.12, cw * 0.55, ch * 0.3, flat); // wyrównany spód
+    // druga warstwa wyższych kłębów na środku (wieżyczki cumulusa)
+    const m = Math.max(1, Math.round(n / 3));
+    for (let k = 0; k < m; k++) {
+      const r = ch * (0.4 + rnd() * 0.25);
+      puffs.push({ x: cx + (rnd() - 0.5) * cw * 0.45, y: flat - ch * 0.55 - r * 0.3, r, flat });
+    }
   }
-  const T = o.tones.map(rgbOf), L = o.light ?? 0, A = o.alpha ?? 1;
-  const at = (x: number, y: number): number => {
-    if (y < 0 || y >= h) return 0;
-    if (o.wrap) x = ((x % w) + w) % w;
-    return x >= 0 && x < w ? m[y * w + x] : 0;
-  };
+  // kłęby od najdalszego (najwyżej) do najbliższego - indeks w masce = właściciel piksela
+  puffs.sort((a, b) => a.y - b.y);
+  const own = new Int16Array(w * h).fill(-1);
+  const wx = (x: number): number => (o.wrap ? ((x % w) + w) % w : x);
+  puffs.forEach((p, idx) => {
+    for (let y = Math.max(0, Math.floor(p.y - p.r)); y <= Math.min(h - 1, p.flat); y++)
+      for (let x = Math.floor(p.x - p.r); x <= Math.ceil(p.x + p.r); x++) {
+        const dx = x + 0.5 - p.x, dy = y + 0.5 - p.y;
+        if (dx * dx + dy * dy > p.r * p.r) continue;
+        const xx = wx(x);
+        if (xx >= 0 && xx < w) own[y * w + xx] = idx;
+      }
+  });
+  const T = o.tones.map(rgbOf), A = o.alpha ?? 1, L = o.light ?? 0;
+  const lx = L * 0.55, ly = -0.8, lz = 0.35;
+  const at = (x: number, y: number): number => (y < 0 || y >= h ? -1 : own[y * w + wx(x)] ?? -1);
   pixels(g, 0, 0, w, h, (d, i, x, y) => {
-    if (!m[y * w + x]) return;
+    const id = own[y * w + x];
+    if (id < 0) return;
+    const p = puffs[id];
     let t: number;
-    const up1 = at(x, y - 1), up2 = at(x, y - 2), up4 = at(x, y - 4);
-    const dn1 = at(x, y + 1), dn3 = at(x, y + 3);
-    const lit1 = L ? at(x - Math.sign(L), y) : 1, lit3 = L ? at(x - Math.sign(L) * 3, y) : 1;
-    const b = bayer(x, y);
-    if (!lit1 || (!up1 && L && !lit3)) t = 0; // krawędź od słońca
-    else if (!up1) t = 1;
-    else if (!dn1) t = 3; // płaski, ciemny spód
-    else if (!up2 || (!lit3 && b < 0.5)) t = 1;
-    else if (!up4) t = b < 0.5 ? 1 : 2;
-    else if (!dn3) t = b < 0.5 ? 3 : 2;
-    else t = 2;
+    const above = at(x, y - 1), below = at(x, y + 1);
+    if (y === p.flat || below < 0) t = 3; // płaski spód
+    else if (above < 0 || (above !== id && puffs[above].y < p.y - 1)) {
+      // brzeg kłębu: od strony światła najjaśniejszy, poza tym jasny
+      const dx = (x + 0.5 - p.x) / p.r;
+      t = L === 0 || dx * L < 0.25 ? 0 : 1;
+    } else {
+      const nx = (x + 0.5 - p.x) / p.r, ny = (y + 0.5 - p.y) / p.r, nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
+      const dot = nx * lx + ny * ly + nz * lz;
+      t = dot > 0.42 ? 1 : dot > -0.05 ? 2 : 3;
+      if (y >= p.flat - 1) t = 3;
+    }
     const c = T[t];
     if (d[i + 3] === 0) {
       d[i] = c[0];
@@ -229,6 +245,29 @@ export function clouds(g: Ctx2D, w: number, h: number, rnd: () => number, list: 
       d[i + 3] = A * 255;
     } else for (let k = 0; k < 3; k++) d[i + k] = d[i + k] + (c[k] - d[i + k]) * A;
   });
+}
+
+/**
+ * Smugi chmur warstwowych (klasyczny pixel-artowy zachód słońca): poziome pasma o zwężonych końcach,
+ * jasna górna krawędź od słońca, ciemniejszy spód. Kolejne rzędy coraz krótsze ku górze i dołowi.
+ */
+export function streaks(g: Ctx2D, w: number, rnd: () => number, y0: number, y1: number, n: number, tones: readonly [ColorIn, ColorIn, ColorIn], wrap = false): void {
+  const [hi, mid, lo] = tones.map(rgbOf);
+  const row = (x: number, y: number, len: number, c: RGB): void => {
+    g.fillStyle = css(c);
+    const a = Math.round(x), l = Math.round(len);
+    g.fillRect(a, y, l, 1);
+    if (wrap && a + l > w) g.fillRect(a - w, y, l, 1);
+    if (wrap && a < 0) g.fillRect(a + w, y, l, 1);
+  };
+  for (let i = 0; i < n; i++) {
+    const y = Math.round(y0 + rnd() * (y1 - y0));
+    const len = 18 + rnd() * 90, x = rnd() * w - (wrap ? 0 : 20);
+    const thick = 1 + Math.floor(rnd() * 3);
+    row(x + len * 0.12, y - 1, len * 0.7, hi);
+    for (let k = 0; k < thick; k++) row(x + k * 2, y + k, len - k * 4, k === thick - 1 ? lo : mid);
+    if (thick > 1) row(x + len * 0.3, y + thick, len * 0.35, lo);
+  }
 }
 
 export interface RuinOptions {
@@ -264,6 +303,7 @@ export function ruins(g: Ctx2D, rnd: () => number, o: RuinOptions): void {
     g.fillStyle = css(c);
     g.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
   };
+  let prevTop: [number, number] | null = null;
   for (let i = 0; i < o.n; i++) {
     const bw = Math.round(wMin + rnd() * (wMax - wMin));
     const bh = Math.round(o.hMin + rnd() * (o.hMax - o.hMin));
@@ -311,6 +351,70 @@ export function ruins(g: Ctx2D, rnd: () => number, o: RuinOptions): void {
         if (litOn && det > 0.5) px(mix(rgbOf(o.lit!), body, 0.55), wx, fy + 2, ww, 1);
       }
     }
+    if (det > 0.6) {
+      const dark = mix(body, side, 0.6), light = rim ?? mix(body, '#ffffff', 0.18);
+      // faktura muru: rzadkie ciemniejsze / jaśniejsze piksele (cegły, odpryski tynku)
+      for (let k = 0; k < bw * bh * 0.025; k++) {
+        const cx = x + 1 + Math.floor(rnd() * (bw - 2)), cy = top + 2 + Math.floor(rnd() * (bh - 3));
+        if (cy > top + prof[cx - x] + 1) px(rnd() < 0.7 ? dark : mix(body, light, 0.4), cx, cy, 1, 1);
+      }
+      // rynna przy krawędzi
+      if (rnd() < 0.4) {
+        const gx = L < 0 ? x + bw - 2 : x + 1;
+        px(dark, gx, top + prof[gx - x] + 2, 1, bh - prof[gx - x] - 2);
+        for (let yy = top + prof[gx - x] + 5; yy < o.base - 2; yy += 7) px(light, gx, yy, 1, 1);
+      }
+      // balkony z balustradą na kilku piętrach
+      if (bw > 14 && rnd() < 0.45) {
+        const bx = x + 2 + Math.floor(rnd() * (bw - 10)), wdt = 6 + Math.floor(rnd() * 3);
+        for (let yy = top + 9 + Math.floor(rnd() * 4); yy < o.base - 6; yy += fh * 2) {
+          if (yy <= top + prof[bx - x] + 2 || rnd() < 0.3) continue;
+          px(dark, bx - 1, yy, wdt + 2, 1);
+          px(light, bx - 1, yy - 1, wdt + 2, 1);
+          for (let k = 0; k < wdt + 2; k += 2) px(dark, bx - 1 + k, yy - 2, 1, 1);
+        }
+      }
+      // skrzynki klimatyzatorów pod oknami
+      for (let k = 0; k < bw / 8; k++) {
+        if (rnd() < 0.5) continue;
+        const ax = x + 2 + Math.floor(rnd() * (bw - 5)), ay = top + 6 + Math.floor(rnd() * (bh - 12));
+        if (ay <= top + prof[ax - x] + 2) continue;
+        px(mix(body, '#9a9a9a', 0.3), ax, ay, 3, 2);
+        px(dark, ax, ay + 2, 3, 1);
+      }
+      // szyld / reklama (czasem z resztką neonu)
+      if (rnd() < 0.22 && bh > 26) {
+        const sw2 = Math.min(bw - 4, 6 + Math.floor(rnd() * 6)), sx2 = x + 2 + Math.floor(rnd() * Math.max(1, bw - sw2 - 3)), sy2 = top + 8 + Math.floor(rnd() * Math.max(1, bh * 0.4));
+        if (sy2 > top + prof[sx2 - x] + 2) {
+          const neon = o.lit && rnd() < 0.5;
+          const sc = neon ? rgbOf(rnd() < 0.5 ? '#ff4a6a' : '#4ae0d0') : mix(rgbOf(rnd() < 0.5 ? '#7a2a1a' : '#2a5a5a'), body, 0.35);
+          px(mix(sc, '#000000', 0.4), sx2 - 1, sy2 - 1, sw2 + 2, 6);
+          px(sc, sx2, sy2, sw2, 4);
+          for (let k = 1; k < sw2 - 1; k += 2) if (rnd() < 0.7) px(mix(sc, neon ? '#ffffff' : '#000000', 0.5), sx2 + k, sy2 + 1 + (k % 3 === 0 ? 1 : 0), 1, 1);
+        }
+      }
+      // bluszcz / pnącza spływające z dachu
+      if (rnd() < 0.3) {
+        const ivyDark = mix(rgbOf('#2a3a1a'), body, 0.35), ivyLit = mix(rgbOf('#5a7a2a'), body, 0.3);
+        const ix = x + Math.floor(rnd() * bw * 0.5), iw = 3 + Math.floor(rnd() * bw * 0.4);
+        for (let cx = ix; cx < Math.min(x + bw, ix + iw); cx++) {
+          const len = Math.floor(rnd() * bh * 0.45);
+          for (let j = 0; j < len; j++) if (rnd() < 0.85) px(rnd() < 0.3 ? ivyLit : ivyDark, cx, top + prof[cx - x] + j, 1, 1);
+        }
+      }
+    }
+    // kable zwisające między dachami sąsiednich budynków
+    if (det > 0.6 && prevTop !== null && rnd() < 0.5) {
+      const [px0, py0] = prevTop, px1 = x + 1, py1 = top + prof[0] + 3;
+      if (px1 - px0 > 3 && px1 - px0 < 60) {
+        const sag = 3 + (px1 - px0) * 0.12;
+        for (let cx = px0; cx <= px1; cx++) {
+          const u = (cx - px0) / (px1 - px0);
+          px(side, cx, Math.round(py0 + (py1 - py0) * u + Math.sin(u * Math.PI) * sag), 1, 1);
+        }
+      }
+    }
+    prevTop = [x + bw - 2, top + prof[bw - 1] + 3];
     // zbrojenie sterczące z wyrwy
     if (broken && det > 0.3) {
       const nRebar = 1 + Math.floor(rnd() * 3 * det);
@@ -565,6 +669,8 @@ export class Birds {
   private readonly box: { x: number; y: number; w: number; h: number };
   private readonly color: number;
   private readonly dir: number;
+  /** Mnożnik prędkości (np. stado spłoszone wybuchem). */
+  speedK = 1;
   constructor(scene: Phaser.Scene, n: number, box: { x: number; y: number; w: number; h: number }, color: number, depth: number, seed = 3, dir = 1) {
     this.box = box;
     this.color = color;
@@ -574,11 +680,15 @@ export class Birds {
     const lx = box.x + r() * box.w * 0.6, ly = box.y + r() * box.h * 0.5;
     this.b = Array.from({ length: n }, (_, i) => ({ x: lx - i * (6 + r() * 6) * dir, y: ly + (i % 2 ? 1 : -1) * i * (2 + r() * 2), v: 9 + r() * 3, ph: r() * 6.28, s: r() < 0.3 ? 2 : 1 }));
   }
+  setVisible(v: boolean): void {
+    this.g.setVisible(v);
+  }
   update(t: number, dt: number): void {
     const g = this.g.clear();
     g.fillStyle(this.color, 1);
     for (const b of this.b) {
-      b.x += b.v * dt * this.dir;
+      b.x += b.v * this.speedK * dt * this.dir;
+      if (this.speedK > 1) b.y -= b.v * (this.speedK - 1) * 0.25 * dt;
       if (this.dir > 0 && b.x > this.box.x + this.box.w + 20) b.x = this.box.x - 20;
       if (this.dir < 0 && b.x < this.box.x - 20) b.x = this.box.x + this.box.w + 20;
       const x = Math.round(b.x), y = Math.round(b.y + Math.sin(t * 0.8 + b.ph) * 3);
