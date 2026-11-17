@@ -14,7 +14,7 @@
 import type Phaser from 'phaser';
 import { RECRUITS } from '../../core/data/recruits';
 import { PixelCanvas } from './Pixel';
-import { ANIMS, ANIM_ORDER, type Pose, type UnitSheet } from './UnitArt';
+import { ANIMS, ANIM_ORDER, BASE_ANIMS, type Pose, type UnitSheet } from './UnitArt';
 
 export const SPRITE_DIRS = ['south', 'south-east', 'east', 'north-east', 'north', 'north-west', 'west', 'south-west'] as const;
 export type SpriteDir = (typeof SPRITE_DIRS)[number];
@@ -40,17 +40,25 @@ for (const path of Object.keys(PORTRAIT_URLS)) PORTRAITS.add(path.split('/').pop
 
 /** Gęstość obrazu względem pikseli projektowych. */
 export const SPRITE_DENSITY = 2;
-/** Klatka w pikselach obrazu (32x36 projektowych). */
-const FW = 64, FH = 72;
+/**
+ * Klatka w pikselach obrazu (32x36 projektowych); bestie 96x104 (48x52), bo paski PixelLab czworonogów mają płótno
+ * ~90 px (wypad, ciało leżące na boku). Ustawiane na czas paintSpriteSheet.
+ */
+let FW = 64, FH = 72;
 /** Stopy w klatce (piksele obrazu): 0.5 i 0.875 rozmiaru, jak UNIT_FOOT_X / UNIT_FW i UNIT_FOOT_Y / UNIT_FH. */
-const FOOT_X = 32, FOOT_Y = 63;
+let FOOT_X = 32, FOOT_Y = 63;
+function cellSize(beast: boolean): void {
+  [FW, FH] = beast ? [96, 104] : [64, 72];
+  FOOT_X = FW / 2;
+  FOOT_Y = FH * 0.875;
+}
 
 export const spriteTexKey = (id: string, dir: SpriteDir): string => `pl_${id}_${dir}`;
 export const spritePortraitKey = (id: string): string => `plp_${id}`;
 export const spriteStripKey = (id: string, anim: StripAnim, dir: SpriteDir): string => `pla_${id}_${anim}_${dir}`;
 
 /** Paski animacji z PixelLab (nazwy plików). */
-export type StripAnim = 'walk' | 'sneak' | 'crouch' | 'shoot' | 'hack' | 'pick';
+export type StripAnim = 'walk' | 'sneak' | 'crouch' | 'shoot' | 'hack' | 'pick' | 'bite' | 'die';
 
 /** Wczytuje obroty i portrety (wywołać w preload pierwszej sceny). */
 export function preloadSprites(scene: Phaser.Scene): void {
@@ -159,7 +167,7 @@ function legSplit(s: Src, hipRow: number): number {
  * nogi osobno (krok: przesunięcie stopy do przodu / tyłu i uniesienie - zgięcie w kolanie), tułów (oddech, pochylenie),
  * głowa z opóźnieniem (hbob), wypad / odrzut, przysiad, upadek i leżenie. `front` = obrót przodem (south-east).
  */
-function poseFrame(s: Src, pose: Pose, front: boolean): PixelCanvas {
+function poseFrame(s: Src, pose: Pose, front: boolean, beast = false): PixelCanvas {
   const pc = new PixelCanvas(FW, FH);
   const height = s.bottom - s.top + 1;
   // obraz ustawiony stopami w (FOOT_X, FOOT_Y)
@@ -189,9 +197,10 @@ function poseFrame(s: Src, pose: Pose, front: boolean): PixelCanvas {
   // i osobny ruch głowy wyglądały na obrazie 64x64 jak przesadne sapanie
   const idle = pose.anim === 'idle';
   const bob = idle ? Math.sign(pose.bob) : pose.bob * PX;
-  const hbob = idle ? 0 : pose.hbob * PX;
+  const hbob = idle || beast ? 0 : pose.hbob * PX;
   // nogi: [bliższa przesunięcie, uniesienie, dalsza przesunięcie, uniesienie] (UnitArt.WALK_LEGS); przy leżeniu bez kroku
-  const legs = lying ? null : pose.legs.some((v) => v !== 0) ? pose.legs : null;
+  // bestia (czworonóg, skorpion): bez rozdzielania nóg - chód z paska PixelLab albo kołysanie całej sylwetki
+  const legs = lying || beast ? null : pose.legs.some((v) => v !== 0) ? pose.legs : null;
   // bliższa noga: przodem (patrzy w prawo-w dół) po lewej stronie obrazu, tyłem (w prawo-w górę) po prawej
   const legDefs = legs
     ? ([
@@ -254,6 +263,7 @@ function poseFrame(s: Src, pose: Pose, front: boolean): PixelCanvas {
   if (pose.die >= 5) tint(pc, 0x1a0e0c, 0.18);
   // kałuża krwi pod zwłokami
   if (pose.die >= 5) puddle(pc, pose.die === 6 ? 1 : 0.6);
+  if (beast) return pc;
   if (pose.flash) muzzle(pc, pose.flash, hip - Math.round(height * 0.12));
   if (pose.cast >= 3) glow(pc, FOOT_Y - height - 1, pose.cast);
   return pc;
@@ -379,6 +389,15 @@ const STRIP_USES: readonly StripUse[] = [
   { anim: 'pick_loop', strip: 'pick', frames: (n) => range(Math.max(0, n - 4), n), ms: 190, loop: true, yoyo: true, ground: true },
 ];
 
+/**
+ * Bestie PixelLab (tools/pixellab_fauna.py): atak = pasek 'bite' (rzut z kłapnięciem / cios kleszczami),
+ * śmierć = pasek 'die' (upadek na bok), zwłoki ciemnieją i leżą w kałuży (dwie ostatnie klatki).
+ */
+const BEAST_STRIP_USES: readonly StripUse[] = [
+  { anim: 'attack', strip: 'bite', ms: [70, 70, 60, 90, 110, 110, 120], loop: false },
+  { anim: 'die', strip: 'die', ms: [70, 90, 90, 90, 110, 160, 260], loop: false },
+];
+
 /** Kierunek widoku (wektor ekranu) -> obrót sprite'a (8 kierunków, y w dół). */
 export function dirOfVector(dx: number, dy: number): SpriteDir {
   const a = Math.atan2(dy, dx); // 0 = wschód, + = w dół ekranu
@@ -434,8 +453,19 @@ function stripCell(rest: Src, first: Src, f: Src, ground: boolean): PixelCanvas 
  * reszta jest składana z obrotu (poseFrame). Do tego chód i spoczynek w 8 kierunkach (`<nazwa>_<kierunek>_walk`
  * / `_idle`, mapa regionu). Płótno i ramki w pikselach obrazu; `density` - pikseli obrazu na piksel projektowy.
  */
-export function paintSpriteSheet(scene: Phaser.Scene, id: string): UnitSheet & { density: number; anims: SheetAnim[] } {
-  const names: string[] = ANIM_ORDER.flatMap((a) => ANIMS[a].poses.map((p) => `${a}${p.i}`));
+export function paintSpriteSheet(scene: Phaser.Scene, id: string, beast = false): UnitSheet & { density: number; anims: SheetAnim[] } {
+  cellSize(beast);
+  try {
+    return paintSheet(scene, id, beast);
+  } finally {
+    cellSize(false);
+  }
+}
+
+function paintSheet(scene: Phaser.Scene, id: string, beast: boolean): UnitSheet & { density: number; anims: SheetAnim[] } {
+  const uses = beast ? [...STRIP_USES.filter((u) => u.strip === 'walk'), ...BEAST_STRIP_USES] : STRIP_USES;
+  // bestie: bez postaw i czynności (jak arkusze iso/CreatureArt)
+  const names: string[] = (beast ? BASE_ANIMS : ANIM_ORDER).flatMap((a) => ANIMS[a].poses.map((p) => `${a}${p.i}`));
   const poses = new Map<string, Pose>(ANIM_ORDER.flatMap((a) => ANIMS[a].poses.map((p) => [`${a}${p.i}`, p] as const)));
   const cells: { name: string; pc: PixelCanvas }[] = [];
   const anims: SheetAnim[] = [];
@@ -452,11 +482,11 @@ export function paintSpriteSheet(scene: Phaser.Scene, id: string): UnitSheet & {
   for (const [facing, dir] of sides) {
     const src = restOf(dir);
     const own = facing !== 'f' && facing !== 'b';
-    if (!own) for (const name of names) cells.push({ name: `${facing}_${name}`, pc: poseFrame(src, poses.get(name)!, facing === 'f') });
+    if (!own) for (const name of names) cells.push({ name: `${facing}_${name}`, pc: poseFrame(src, poses.get(name)!, facing === 'f', beast) });
     if (!own) anims.push({ suffix: `${facing}_idle`, frames: SPRITE_IDLE.frames.map((i) => `${facing}_idle${i}`), durs: [...SPRITE_IDLE.durs], loop: true });
     // paski PixelLab
     const strips = new Map<StripAnim, Src[] | null>();
-    for (const u of STRIP_USES) {
+    for (const u of uses) {
       if (own && u.strip === 'walk') continue; // chód SW / NW jest w animacjach 8 kierunków
       if (!strips.has(u.strip)) strips.set(u.strip, stripFrames(scene, id, u.strip, dir));
       const fr = strips.get(u.strip);
@@ -465,6 +495,11 @@ export function paintSpriteSheet(scene: Phaser.Scene, id: string): UnitSheet & {
       const frames = idx.map((k, j) => {
         const name = `${facing}_${u.anim}_x${j}`;
         const pc = stripCell(src, fr[0], fr[k], !!u.ground);
+        if (u.strip === 'die' && j >= idx.length - 2) {
+          // zwłoki: ciemniejsze, kałuża pod spodem (w lewo - na odbitej klatce jest symetryczna)
+          tint(pc, 0x1a0e0c, 0.18);
+          puddle(pc, j === idx.length - 1 ? 1 : 0.6);
+        }
         if (u.flash !== undefined && (j === u.flash || j === u.flash + 1)) {
           const h = src.bottom - src.top + 1;
           // błysk przed lufą: w lewo (SW / NW) na odbitej klatce
@@ -485,14 +520,14 @@ export function paintSpriteSheet(scene: Phaser.Scene, id: string): UnitSheet & {
   for (const dir of SPRITE_DIRS) {
     const src = restOf(dir);
     const front = dir.startsWith('south') || dir === 'east';
-    for (const i of SPRITE_IDLE.poses) cells.push({ name: `d_${dir}_idle${i}`, pc: poseFrame(src, idleDef.poses[i], front) });
+    for (const i of SPRITE_IDLE.poses) cells.push({ name: `d_${dir}_idle${i}`, pc: poseFrame(src, idleDef.poses[i], front, beast) });
     anims.push({ suffix: `${dir}_idle`, frames: SPRITE_IDLE.frames.map((i) => `d_${dir}_idle${i}`), durs: [...SPRITE_IDLE.durs], loop: true });
     const fr = stripFrames(scene, id, 'walk', dir);
     if (fr && fr.length) {
       fr.forEach((f, k) => cells.push({ name: `d_${dir}_walk${k}`, pc: stripCell(src, fr[0], f, false) }));
       anims.push({ suffix: `${dir}_walk`, frames: fr.map((_, k) => `d_${dir}_walk${k}`), durs: fr.map(() => msOf(walkUse, 0)), loop: true });
     } else {
-      walkPoses.forEach((p) => cells.push({ name: `d_${dir}_walk${p.i}`, pc: poseFrame(src, p, front) }));
+      walkPoses.forEach((p) => cells.push({ name: `d_${dir}_walk${p.i}`, pc: poseFrame(src, p, front, beast) }));
       anims.push({ suffix: `${dir}_walk`, frames: walkPoses.map((p) => `d_${dir}_walk${p.i}`), durs: ANIMS.walk.durs.map((d) => d * 1.3), loop: true });
     }
   }

@@ -18,8 +18,9 @@ import { paintCreatureSheet } from './iso/CreatureArt';
 import { ArtBook } from './iso/IsoArt';
 import { addHiRes } from './iso/HiRes';
 import { type Box, MAP_H, MAP_W, beaconPos, paintRegion, regionFires, regionOccluders, scrX, scrXf, scrY, scrYf } from './iso/RegionArt';
-import { addUnit, unitLookOf } from './iso/UnitLooks';
-import { dirOfVector, type SpriteDir } from './iso/SpriteUnits';
+import { type CreatureLook, addUnit, ensureUnit, unitLookOf } from './iso/UnitLooks';
+import { UNIT_FH, UNIT_FOOT_X, UNIT_FOOT_Y, UNIT_FW } from './iso/UnitArt';
+import { dirOfVector, enemySpriteId, type SpriteDir } from './iso/SpriteUnits';
 import { BASE_H, BASE_W, Motes, PAL, VW, VH, VX, VY, ZOOM, ZOOM_EVENT, type UiButton, button, campfire, cut, enter, fitViewport, goto, label, panel, parseColor, tiledImage } from './ui/Kit';
 import { modalOpen, openWindow } from './ui/Widgets';
 
@@ -848,6 +849,26 @@ export class TravelScene extends Phaser.Scene {
   private beastSprite(templateId: string, i: number, x: number, y: number): Phaser.GameObjects.Sprite {
     const def = (ENEMIES as Record<string, { look: { shape: EnemyShape; scale?: number } }>)[templateId];
     const shape = def?.look.shape ?? 'quad';
+    const size = 0.42 * Math.min(1.4, def?.look.scale ?? 1) * (0.8 + Math.random() * 0.4);
+    // bestia PixelLab (także gatunki tylko z mapy regionu, bez szablonu wroga - wygląd po samym id)
+    const sprite = enemySpriteId(templateId);
+    if (sprite) {
+      const look: CreatureLook = { creature: shape, shape, skin: 0, accent: 0, sprite };
+      // wspólny arkusz z misji; '<nazwa>_idle' / '_walk' = przód (w lewo odbicie, jak klatki proceduralne)
+      const name = `fauna_${templateId}`;
+      const tex = ensureUnit(this, name, look);
+      for (const a of ['idle', 'walk'] as const)
+        if (!this.anims.exists(`${name}_${a}`)) {
+          const src = this.anims.get(`${name}_f_${a}`);
+          if (!src) continue;
+          this.anims.create({ key: `${name}_${a}`, frames: src.frames.map((f) => ({ key: tex, frame: f.textureFrame, duration: f.duration })), repeat: -1 });
+        }
+      const sp = this.add.sprite(x, y, tex, 'f_idle0').setOrigin(UNIT_FOOT_X / UNIT_FW, UNIT_FOOT_Y / UNIT_FH).setScale(size).setDepth(7);
+      sp.setData('anim', name);
+      sp.play(`${name}_idle`);
+      this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => sp.destroy());
+      return sp;
+    }
     const skin = BEAST_SKINS[Math.floor(Math.random() * BEAST_SKINS.length)], eye = BEAST_EYES[Math.floor(Math.random() * BEAST_EYES.length)];
     const name = `fauna_${i}_${Date.now() % 100000}`, tex = `unit_${name}`;
     const sh = paintCreatureSheet(shape, parseColor(skin, 0x8a6a4a), parseColor(eye, 0xff3a2a), templateId);
@@ -857,7 +878,7 @@ export class TravelScene extends Phaser.Scene {
     else new ArtBook(this).sheet(tex, sh.pc, sh.frames);
     this.anims.create({ key: `${name}_idle`, frames: ['f_idle0', 'f_idle1'].map((frame) => ({ key: tex, frame })), frameRate: 1.6, repeat: -1 });
     this.anims.create({ key: `${name}_walk`, frames: [0, 1, 2, 3].map((k) => ({ key: tex, frame: `f_walk${k}` })), frameRate: 11, repeat: -1 });
-    const sp = this.add.sprite(x, y, tex, 'f_idle0').setOrigin(0.5, 0.85).setScale(0.42 * Math.min(1.4, def?.look.scale ?? 1) * (0.8 + Math.random() * 0.4)).setDepth(7);
+    const sp = this.add.sprite(x, y, tex, 'f_idle0').setOrigin(0.5, 0.85).setScale(size).setDepth(7);
     sp.setData('anim', name);
     sp.play(`${name}_idle`);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
