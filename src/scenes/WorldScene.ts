@@ -18,7 +18,7 @@ import type { CheckResult, DamageRoll } from '../core/rules/dice';
 import { HACK_SKILLS, hasLockpick, IMPROVISED_PENALTY, LOCK_SKILLS, type LockAttempt } from '../core/rules/locks';
 import type { ActionResult, Character, GridPos } from '../core/rules/types';
 import { aiStep } from '../core/tactical/ai';
-import { type ActionOutcome, type Actor, type ActorState, type CombatSignal, type TurnInfo, Combat, exploreAbilityOk, exploreItemOk } from '../core/tactical/combat';
+import { type ActionOutcome, type Actor, type ActorState, type CombatSignal, type StrikeInfo, type TurnInfo, Combat, exploreAbilityOk, exploreItemOk } from '../core/tactical/combat';
 import { CellKind, type SearchResult, UNREACHABLE, cheb, strideActions } from '../core/tactical/grid';
 import type { Biome, MapProp, PropType, TacticalMap } from '../core/tactical/mapgen';
 import { CRATE_SKILLS, type MissionContract, type MissionFind, type MissionResult, type MissionSignal, type MissionThing, Mission } from '../core/tactical/mission';
@@ -138,6 +138,10 @@ const isAttackSfx = (s: string): s is SfxName => (ATTACK_SFX as readonly string[
 
 const TINT_VISIBLE = 0xffffff;
 const COLOR_OK = 0x9ad84a;
+/** Kolory linii strzału (drawShotLine). */
+const LASER_OK = 0x48ff5a;
+const LASER_FAR = 0xff3a2e;
+const LASER_NO_LOS = 0xffa020;
 const COLOR_FAR = 0xd84a3a;
 const COLOR_HOSTILE = 0xff5040;
 
@@ -292,6 +296,8 @@ export class WorldScene extends Phaser.Scene {
   private overlay!: Phaser.GameObjects.Container;
   private rangeGfx!: Phaser.GameObjects.Graphics;
   private aimGfx!: Phaser.GameObjects.Graphics;
+  /** Linia strzału (laser) od aktywnej postaci do wroga pod kursorem. */
+  private laserGfx!: Phaser.GameObjects.Graphics;
   private ringGfx!: Phaser.GameObjects.Graphics;
   private barGfx!: Phaser.GameObjects.Graphics;
   private barMarks = new Map<Actor, Phaser.GameObjects.Image>();
@@ -1304,6 +1310,7 @@ export class WorldScene extends Phaser.Scene {
 
     this.rangeGfx = this.add.graphics().setDepth(D_CURSOR - 0.5);
     this.aimGfx = this.add.graphics().setDepth(D_PATH + 0.5);
+    this.laserGfx = this.add.graphics().setDepth(D_TEXT - 6);
     this.ringGfx = this.add.graphics().setDepth(D_UNIT_SHADOW + 0.5);
     this.barGfx = this.add.graphics().setDepth(D_TEXT - 5);
 
@@ -3104,6 +3111,7 @@ export class WorldScene extends Phaser.Scene {
     this.hud.setInitiative([]);
     this.rangeGfx.clear();
     this.aimGfx.clear();
+    this.laserGfx.clear();
     this.outline.clear();
     this.hoverOutline.clear();
     this.finishPlayerTurn();
@@ -3173,6 +3181,7 @@ export class WorldScene extends Phaser.Scene {
   private refreshPathPreview(): void {
     const sel = this.selected;
     this.aimGfx?.clear();
+    this.laserGfx?.clear();
     this.hoverOutline.clear();
     if (!this.hud.canAct || !sel || this.over || this.hud.prompt) {
       this.clearPathPreview();
@@ -3224,6 +3233,7 @@ export class WorldScene extends Phaser.Scene {
       if (who.side === 'enemy') {
         const i = this.combat.strikeInfo(sel, who);
         if (i.ok || i.melee) this.hoverOutline.set(who, OL.hover);
+        this.drawShotLine(sel, who, i);
       }
       this.hud.setHover(who.side === 'enemy' ? this.enemyHoverText(sel, who) : this.allyHoverText(who));
       return;
@@ -3475,10 +3485,35 @@ export class WorldScene extends Phaser.Scene {
     this.costLabel.setTexture(key).setPosition(c.x, c.y - 14).setTint(color).setVisible(true);
   }
 
+  /**
+   * Linia strzału: cienki laser od aktywnej postaci do celu + odległość w polach.
+   * Zielony: cel osiągalny wybraną bronią; czerwony: poza zasięgiem; pomarańczowy: w zasięgu, ale brak linii strzału.
+   */
+  private drawShotLine(att: Actor, def: Actor, info: StrikeInfo): void {
+    const g = this.laserGfx.clear();
+    const a = this.units.get(att), d = this.units.get(def);
+    if (!a || !d) return;
+    const col = info.ok ? LASER_OK : info.reason === 'brak linii strzału' ? LASER_NO_LOS : LASER_FAR;
+    const x0 = a.sprite.x, y0 = a.sprite.y - 13;
+    const x1 = d.sprite.x, y1 = d.sprite.y - 12;
+    g.lineStyle(1.5, col, 0.22).lineBetween(x0, y0, x1, y1);
+    g.lineStyle(0.5, col, 0.95).lineBetween(x0, y0, x1, y1);
+    g.fillStyle(col, 0.95).fillCircle(x1, y1, 1);
+    g.fillStyle(col, 0.3).fillCircle(x1, y1, 2.2);
+    const dist = cheb(att, def);
+    this.setCostLabel(String(dist), def, col);
+    // etykieta w połowie linii, odsunięta prostopadle, żeby nie zasłaniała lasera ani postaci
+    const len = Math.hypot(x1 - x0, y1 - y0) || 1;
+    const side = x1 - x0 >= 0 ? 1 : -1;
+    this.costLabel?.setPosition(Math.round((x0 + x1) / 2 + (side * (y1 - y0) * 8) / len), Math.round((y0 + y1) / 2 - (side * (x1 - x0) * 8) / len));
+  }
+
   /** Opis wroga pod kursorem: PW, KP, szansa trafienia z flankowaniem / osłoną / PWA (Combat.strikeInfo). */
   private enemyHoverText(sel: Actor, foe: Actor): string {
-    const base = `${foe.ch.name} · PW ${Math.max(0, foe.ch.hp)}/${foe.ch.maxHp}`;
     const info = this.combat.strikeInfo(sel, foe);
+    const r = info.weapon.range;
+    const dist = `odl. ${cheb(sel, foe)} (${r ? `zasięg ${r}, maks. ${r * 6}` : 'wręcz'})`;
+    const base = `${foe.ch.name} · PW ${Math.max(0, foe.ch.hp)}/${foe.ch.maxHp} · ${dist}`;
     const ambush = this.hud.inCombat ? '' : ' · klik = zasadzka (drużyna zaczyna, wróg odsłonięty)';
     if (!info.ok) {
       const approach = info.melee && this.playerTurn && this.playerTurn.actions >= 2 ? ' · podejście i cios (2+ AP)' : '';
