@@ -1148,8 +1148,9 @@ export class WorldScene extends Phaser.Scene {
         const lk = a.ch.look as Partial<EnemyLook>;
         key = ranged ? 'en_gunner' : 'en_raider';
         look = ranged ? LOOK_GUNNER : LOOK_RAIDER;
-        if (this.job && a.ch.templateId) {
-          // wygląd z szablonu wroga (iso/UnitLooks: broń z ataku, maski, robot, Kostucha; bestie - własny gatunek)
+        if (a.ch.templateId) {
+          // wygląd z szablonu wroga (iso/UnitLooks: broń z ataku, maski, robot, Kostucha; bestie - własny gatunek),
+          // także w misji demonstracyjnej (bez zlecenia) - inaczej szabrownicy mieliby stare klatki zamiast PixelLab
           key = `en_${a.ch.templateId}`;
           const el = enemyUnitLook(a.ch.templateId, lk);
           if (isCreatureLook(el) && el.sprite) {

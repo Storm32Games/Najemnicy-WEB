@@ -303,15 +303,29 @@ export class HubScene extends Phaser.Scene {
   }
 
   /** Wiersz przedmiotu: ikona, nazwa (xN), krótka statystyka; zwraca szerokość zajętą z prawej przez `right`. */
-  private itemRow(row: Phaser.GameObjects.Container, w: number, id: string, qty: number, extra = ''): void {
+  /**
+   * Wiersz przedmiotu: ikona, nazwa (przycięta do miejsca), opis statystyk, a przy prawej krawędzi pole z liczbą sztuk.
+   * Pole ilości ma stałe miejsce, więc długa nazwa nigdy go nie zasłoni. `compact` (okno Drużyna): drobny druk
+   * i pole ilości także przy 1 sztuce.
+   */
+  private itemRow(row: Phaser.GameObjects.Container, w: number, id: string, qty: number, extra = '', compact = false): void {
     const def = itemDef(id);
     const hit = this.add.rectangle(0, 0, w, 12, 0x000000, 0.25).setOrigin(0).setInteractive();
     this.tip.attach(hit, () => itemTip(id));
     row.add([hit, itemIconImage(this, 1, 1, id, 10)]);
-    const name = label(this, 14, 2, cut((def?.name ?? id) + (qty > 1 ? ` ×${qty}` : ''), 24), { size: 6 });
+    let right = w;
+    if (qty > 1 || compact) {
+      const q = label(this, 0, 2.5, `×${qty}`, { size: 6, small: compact, color: qty > 1 ? PAL.amber : PAL.dim });
+      const qw = Math.ceil(q.displayWidth) + 4;
+      right = w - qw - 1;
+      row.add([this.add.rectangle(right, 1, qw, 10, 0x000000, 0.45).setOrigin(0).setStrokeStyle(1, PAL.edge), q.setPosition(right + 2, compact ? 3 : 2)]);
+      right -= 2;
+    }
+    const name = label(this, 14, compact ? 3 : 2, def?.name ?? id, { size: 6, small: compact, maxW: right - 14 });
     row.add(name);
-    const stat = extra || itemStatLine(def, true);
-    if (stat) row.add(label(this, 14 + name.displayWidth + 4, 2.5, cut(stat, 14), { size: 5, color: PAL.dim }));
+    const stat = extra.trim() ? extra : extra ? '' : itemStatLine(def, true);
+    const sx = 14 + name.displayWidth + 4;
+    if (stat && right - sx >= 14) row.add(label(this, sx, 3, stat, { size: 5, small: true, color: PAL.dim, maxW: right - sx }));
   }
 
   // ================================================================== tablica zleceń
@@ -642,7 +656,7 @@ export class HubScene extends Phaser.Scene {
       this.L(x + w, y, v, { size: 6, bold: true, color }).setOrigin(1, 0);
     };
     // ---- kolumna 1: cechy + obrona
-    const C1 = X0, W1 = 92;
+    const C1 = X0, W1 = 84;
     box(C1, Y0, W1, 62, 'Cechy');
     ATTRS.forEach((a, i) => kv(C1 + 4, Y0 + 11 + i * 8, W1 - 8, ATTR_NAMES[a], signed(ch.attrs[a]), ch.attrs[a] > 0 ? PAL.good : ch.attrs[a] < 0 ? PAL.bad : PAL.text));
     box(C1, Y0 + 65, W1, 70, 'Obrona');
@@ -689,15 +703,15 @@ export class HubScene extends Phaser.Scene {
     const pack = new ScrollList<ItemInstance>(this, C3 + 2, Y0 + 75, W3 - 3, 39, 13, (inst, row, w) => {
       const def = itemDef(inst.id);
       const usable = def?.type === 'consumable' && def.consumable.effect === 'heal';
-      this.itemRow(row, w - (usable ? 40 : 14), inst.id, inst.qty, ' ');
+      this.itemRow(row, w - (usable ? 44 : 14), inst.id, inst.qty, ' ', true);
       if (usable)
-        row.add(miniButton(this, w - 39, 1, 'Użyj', () => {
+        row.add(miniButton(this, w - 43, 1, 'Użyj', () => {
           const before = ch.hp;
           useConsumable(ch, inst, [ch]);
           SoundManager.sfx('heal');
           toast(this, `${shortName(ch.name)}: +${ch.hp - before} PW`, 'good');
           this.redraw();
-        }, { w: 24 }).box);
+        }, { w: 29 }).box);
       row.add(miniButton(this, w - 13, 1, '→', () => {
         moveItem(inst, ch.inventory, st.stash);
         this.redraw();
@@ -708,7 +722,7 @@ export class HubScene extends Phaser.Scene {
 
     box(C3, Y0 + 118, W3, 51, 'Skrytka drużyny');
     const stash = new ScrollList<ItemInstance>(this, C3 + 2, Y0 + 128, W3 - 3, 39, 13, (inst, row, w) => {
-      this.itemRow(row, w - 14, inst.id, inst.qty, ' ');
+      this.itemRow(row, w - 14, inst.id, inst.qty, ' ', true);
       row.add(miniButton(this, w - 13, 1, '←', () => {
         moveItem(inst, st.stash, ch.inventory);
         this.redraw();
