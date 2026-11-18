@@ -1,7 +1,7 @@
 {
   "name": "webgames",
   "private": true,
-  "version": "70.0.0",
+  "version": "0.72.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
