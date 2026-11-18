@@ -29,6 +29,7 @@ import { TurnPhase } from '../core/TurnManager';
 import { BASE_H, BASE_W, PAL, SMALL_TEXT, UI_TITLE, ZOOM, button as kitButton, fitCamera, label, parseColor, uiAlphaToggle, uiBg } from './ui/Kit';
 import { fitText } from './ui/FontGlyphs';
 import { MissionLayout, type MissionLayoutData } from './ui/MissionLayout';
+import { openPartyWindow } from './ui/PartyWindow';
 import { type Window as UiWindow, abilityIconImage, itemIconImage, modalOpen, openOptions, openWindow, portraitKey } from './ui/Widgets';
 
 // HUD misji - port Oldgame/src/mission/hud.js (DOM) do Phasera, w stylu terminala CRT.
@@ -356,6 +357,9 @@ export class UIScene extends Phaser.Scene {
   private hoverBox!: Phaser.GameObjects.Container;
 
   private btnInv!: Button;
+  private btnParty!: Button;
+  /** Otwarte okno Drużyna (ui/PartyWindow) albo null. */
+  private partyWin: UiWindow | null = null;
   private btnHelp!: Button;
   private btnGroup!: Button;
   private btnSpeed!: Button;
@@ -510,6 +514,7 @@ export class UIScene extends Phaser.Scene {
       if (!blocked() && !this.hud.helpOpen) this.hud.command({ kind: 'endTurn' });
     });
     kb?.on('keydown-I', () => !blocked() && this.toggleSheet());
+    kb?.on('keydown-P', () => !blocked() && this.openParty());
     kb?.on('keydown-X', () => !blocked() && this.hud.command({ kind: 'swapWeapons' }));
     kb?.on('keydown-H', () => !blocked() && this.hud.toggleHelp());
     // dziennik: PgUp / PgDn = strona, Home = najstarsze, End = najnowsze
@@ -978,7 +983,10 @@ export class UIScene extends Phaser.Scene {
     this.btnGroup.set(hud.groupMove ? 'RUCH: DRUŻ. [G]' : 'RUCH: SOLO [G]', !hud.inCombat);
     this.btnZoomOut.set('MAPA −', true);
     this.btnZoomIn.set('MAPA +', true);
-    this.btnInv.set(hud.inventoryOpen ? 'ZAMKNIJ EKWIPUNEK [I]' : 'EKWIPUNEK [I]', true);
+    this.btnInv.set(hud.inventoryOpen ? 'ZAMKNIJ EKW. [I]' : 'EKWIPUNEK [I]', true);
+    // okno Drużyna tylko poza walką: na początku walki przycisk gaśnie, a otwarte okno się zamyka
+    this.btnParty.set('DRUŻYNA [P]', !hud.inCombat);
+    if (hud.inCombat) this.partyWin?.close();
     this.btnRetreat.style(hud.contractDone ? 'primary' : 'danger');
     this.btnRetreat.set(hud.contractDone ? 'POWRÓT' : 'ODWRÓT', !locked || (hud.inCombat && !enemy && !hud.busy));
     this.btnSave.set('ZAPISZ GRĘ', !locked && !hud.inCombat);
@@ -1005,7 +1013,8 @@ export class UIScene extends Phaser.Scene {
     this.btnGroup = this.button(bx2, row(1), bw, '', () => this.hud.command({ kind: 'toggleGroup' }), 'normal', B);
     this.btnZoomOut = this.button(bx, row(2), bw, '', () => this.hud.command({ kind: 'zoom', f: 1 / 1.25 }), 'normal', B);
     this.btnZoomIn = this.button(bx2, row(2), bw, '', () => this.hud.command({ kind: 'zoom', f: 1.25 }), 'normal', B);
-    this.btnInv = this.button(bx, row(3), W, '', () => this.toggleSheet(), 'normal', B);
+    this.btnInv = this.button(bx, row(3), bw, '', () => this.toggleSheet(), 'normal', B);
+    this.btnParty = this.button(bx2, row(3), bw, '', () => this.openParty(), 'normal', B);
     this.btnRetreat = this.button(bx, row(4), bw, '', () => this.hud.command({ kind: 'retreat' }), 'danger', B);
     this.btnSave = this.button(bx2, row(4), bw, '', () => !modalOpen(this) && this.hud.command({ kind: 'save' }), 'normal', B);
     this.btnLoad = this.button(bx, row(5), bw, '', () => !modalOpen(this) && this.hud.command({ kind: 'load' }), 'normal', B);
@@ -2035,6 +2044,17 @@ export class UIScene extends Phaser.Scene {
   }
 
   // ================================================================== karta postaci / ekwipunek (port H.sheet)
+
+  /** Okno Drużyna (podgląd najemników jak w Przystani); niedostępne w walce. */
+  private openParty(): void {
+    if (this.hud.inCombat || this.partyWin || modalOpen(this)) return;
+    SoundManager.sfx('click');
+    const start = Math.max(0, this.hud.party.indexOf(this.hud.active as Character));
+    const win = openPartyWindow(this, this.hud.party, start, () => {
+      if (this.partyWin === win) this.partyWin = null;
+    });
+    this.partyWin = win;
+  }
 
   private toggleSheet(): void {
     this.hud.toggleInventory();

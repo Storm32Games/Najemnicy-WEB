@@ -9,7 +9,7 @@ import { itemStatLine } from '../../core/HudState';
 import { abilityDef, itemDef } from '../../core/rules/lookup';
 import { abilityIcon, abilityKind, itemIcon } from '../legacy/icons';
 import { portraitCanvas } from '../legacy/portraits';
-import { hasSpritePortrait, spriteIdOf, spritePortraitCanvas } from '../iso/SpriteUnits';
+import { enemySpriteId, hasSpritePortrait, spriteIdOf, spritePortraitCanvas } from '../iso/SpriteUnits';
 import { addHiRes } from '../iso/HiRes';
 import { ART, BASE_H, BASE_W, CANVAS_H, CANVAS_W, PAL, RES, type UiButton, UI_TITLE, ZOOM, applyResolution, button, goto, canApplyZoomLive, hex, label, panel, parseColor, uiAlphaToggle } from './Kit';
 import { RES_PRESETS, type ResSetting, Settings, UI_ALPHAS, UI_SIZES, type UiAlpha, resPreset } from './Settings';
@@ -40,6 +40,8 @@ export interface SaveSlotInfo {
   level: number;
   /** Tytuł zlecenia, gdy zapisano w trakcie misji. */
   mission: string | null;
+  /** Wersja gry, w której powstał zapis (null = stary zapis bez wersji). */
+  gameVersion: string | null;
 }
 
 /** Misja w toku w zapisie: zlecenie, stan planszy i kampania z chwili wejścia na teren (do "Wyjdź" / "Zapisz i wyjdź"). */
@@ -48,7 +50,7 @@ export interface MissionResume {
   snap: MissionSnapshot;
   entry: string;
 }
-type SavedState = Partial<CampaignState> & { savedAt?: number; mission?: MissionResume | null };
+type SavedState = Partial<CampaignState> & { savedAt?: number; gameVersion?: string; mission?: MissionResume | null };
 
 const readState = (key: string): SavedState | null => {
   try {
@@ -62,7 +64,7 @@ const readState = (key: string): SavedState | null => {
 const writeState = (key: string): boolean => {
   try {
     const mission = Save.missionProvider?.() ?? null;
-    window.localStorage.setItem(key, JSON.stringify({ ...campaign.state, savedAt: Date.now(), ...(mission ? { mission } : {}) }));
+    window.localStorage.setItem(key, JSON.stringify({ ...campaign.state, savedAt: Date.now(), gameVersion: __GAME_VERSION__, ...(mission ? { mission } : {}) }));
     return true;
   } catch {
     return false;
@@ -71,7 +73,7 @@ const writeState = (key: string): boolean => {
 
 const applyState = (s: SavedState | null): boolean => {
   if (!s) return false;
-  const { savedAt: _t, mission, ...rest } = s;
+  const { savedAt: _t, gameVersion: _v, mission, ...rest } = s;
   campaign.state = Object.assign(freshState(), rest);
   Save.pending = mission && mission.contract && mission.snap ? mission : null;
   return true;
@@ -133,6 +135,7 @@ export const Save = {
       party: party.map((c) => c.name),
       level: party.length ? Math.max(...party.map((c) => c.level ?? 1)) : 1,
       mission: s.mission?.contract?.title ?? null,
+      gameVersion: typeof s.gameVersion === 'string' ? s.gameVersion : null,
     };
   },
   anySlot(): boolean {
@@ -171,7 +174,7 @@ export function openSaveSlots(scene: Phaser.Scene, mode: 'save' | 'load'): Promi
       row.add(scene.add.rectangle(0, 0, W - 16, ROW, 0x000000, 0.35).setOrigin(0).setStrokeStyle(1, PAL.edge));
       row.add(label(scene, 6, 4, `SLOT ${i}`, { size: 7, bold: true, color: PAL.amber }));
       if (info) {
-        row.add(label(scene, 48, 4, fmtTime(info.time), { size: 6, color: PAL.dim }));
+        row.add(label(scene, 48, 4, fmtTime(info.time) + (info.gameVersion ? ` · v${info.gameVersion}` : ''), { size: 6, color: PAL.dim }));
         row.add(label(scene, 6, 14, info.mission ? `Dzień ${info.day} · misja: ${info.mission.length > 24 ? `${info.mission.slice(0, 23)}…` : info.mission}` : `Dzień ${info.day} · poz. ${info.level} · ${info.scrap} Złomu`, { size: 6, color: info.mission ? PAL.amber : undefined }));
         const names = info.party.join(', ') || '(brak żywych najemników)';
         row.add(label(scene, 6, 23, names.length > 34 ? `${names.slice(0, 33)}…` : names, { size: 5.5, color: PAL.dim }));
@@ -208,6 +211,8 @@ export function openSaveSlots(scene: Phaser.Scene, mode: 'save' | 'load'): Promi
 interface PortraitSource {
   id?: string;
   recruitId?: string;
+  /** Szablon wroga (EnemyId): szabrownicy mają portret PixelLab w src/assets/portraits/<templateId>.png. */
+  templateId?: string;
   name?: string;
   classId?: string;
   ancestry?: string;
@@ -227,8 +232,9 @@ const hashStr = (s: string): string => {
  * (applyResolution) powstaje nowa tekstura w nowej gęstości.
  */
 export function portraitKey(scene: Phaser.Scene, ch: PortraitSource, size = 32): string {
-  // najemnik z gotowym portretem (iso/SpriteUnits: popiersie PixelLab 64x64), powiększany najbliższym sąsiadem
-  const sprite = spriteIdOf(ch);
+  // najemnik albo wróg (szablon, np. raider_thug) z gotowym portretem (iso/SpriteUnits: popiersie PixelLab 64x64),
+  // powiększany najbliższym sąsiadem - zgodny z postacią na mapie zamiast starego portretu malowanego kodem
+  const sprite = spriteIdOf(ch) ?? enemySpriteId(ch.templateId);
   if (hasSpritePortrait(scene, sprite)) {
     const key = `porpl_${sprite}_${size}@${ART}`;
     if (!scene.textures.exists(key)) addHiRes(scene, key, spritePortraitCanvas(scene, sprite), { w: size, h: size, smooth: false });

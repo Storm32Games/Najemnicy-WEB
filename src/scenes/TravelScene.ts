@@ -67,13 +67,19 @@ const Z_ALL = Math.max(BASE_W / MAP_W, BASE_H / MAP_H), Z_LEVELS = [Z_ALL, 1, 2,
 /** Widok startowy: śródmieście z Przystanią przy lewej krawędzi. */
 const START_VIEW = { x: MAP_W * 0.45, y: MAP_H * 0.56, z: Z_START };
 /** Opóźnienie automatycznego wymarszu po przyjściu z Przystani ze zleceniem (Oldgame/src/scenes/worldmap.js:74). */
-const AUTO_DEPART_MS = 700;
+const AUTO_DEPART_MS = 3000;
+/** Lista zleceń po wymarszu: tyle widać ją dalej, potem wygasa przez LIST_FADE_MS. */
+const LIST_HOLD_MS = 2500;
+const LIST_FADE_MS = 900;
+/** Szarża bestii na drużynę (zasadzka w podróży) i chwila po uderzeniu, zanim pokaże się okno zdarzenia. */
+const CHARGE_MS = 1500;
+const IMPACT_PAUSE_MS = 650;
 const LIST_X = 6, LIST_Y = 18, LIST_W = 124, ROW_H = 29;
 const SIDE_W = 150, SIDE_X = BASE_W - SIDE_W - 6, SIDE_Y = 18;
 const D_LABEL = 5, D_PANEL = 20;
 
 export interface TravelSceneData {
-  /** Zlecenie (albo jego id, np. z ?contract= w URL). Podane = auto-wymarsz po 700 ms (klik / klawisz anuluje). */
+  /** Zlecenie (albo jego id, np. z ?contract= w URL). Podane = auto-wymarsz po AUTO_DEPART_MS (klik / klawisz anuluje). */
   contract?: Contract | string;
   /** Dev: wymuszone zdarzenie (id z EVENTS albo 'fauna_attack'), jak ?event= w Oldgame. */
   event?: string;
@@ -625,7 +631,10 @@ export class TravelScene extends Phaser.Scene {
     this.cancelAuto(false);
     this.state = 'moving';
     this.tick = 0;
-    this.list.setVisible(false);
+    // lista zleceń zostaje jeszcze chwilę na ekranie i wygasa (klikanie w nią i tak działa tylko w spoczynku)
+    this.tweens.killTweensOf(this.list);
+    this.list.setAlpha(1);
+    this.tweens.add({ targets: this.list, alpha: 0, delay: LIST_HOLD_MS, duration: LIST_FADE_MS, onComplete: () => this.list.setVisible(false).setAlpha(1) });
     this.side.setVisible(false);
     this.hint.setVisible(false);
     this.drag = null;
@@ -989,22 +998,25 @@ export class TravelScene extends Phaser.Scene {
     SoundManager.sfx('growl');
     const name = f.sprite.getData('anim') as string;
     f.sprite.setFlipX(P.x - P.z < f.x - f.z).play(`${name}_walk`);
-    this.tweens.add({ targets: f, x: P.x + (f.x < P.x ? -Q(0.9) : Q(0.9)), z: P.z, duration: 700, onComplete: () => {
+    // wolniejsza szarża (zwolniony chód bestii), uderzenie i krótka pauza przed oknem zdarzenia
+    f.sprite.anims.timeScale = 0.7;
+    this.tweens.add({ targets: f, x: P.x + (f.x < P.x ? -Q(0.9) : Q(0.9)), z: P.z, duration: CHARGE_MS, ease: 'Sine.easeIn', onComplete: () => {
+      f.sprite.anims.timeScale = 1;
       SoundManager.sfx('hit');
-      this.cameras.main.shake(140, 0.004);
-      this.showEvent(faunaAttackEvent(f.name), (choice, degree) => {
+      this.cameras.main.shake(320, 0.005);
+      this.time.delayedCall(IMPACT_PAUSE_MS, () => this.showEvent(faunaAttackEvent(f.name), (choice, degree) => {
         if (choice === 0 && degree >= 2) {
           f.dead = true;
           f.sprite.anims.stop();
-          this.tweens.add({ targets: f.sprite, angle: f.sprite.flipX ? 90 : -90, duration: 300 });
-          this.tweens.add({ targets: f, alpha: 0.5, duration: 300 });
+          this.tweens.add({ targets: f.sprite, angle: f.sprite.flipX ? 90 : -90, duration: 700, ease: 'Bounce.easeOut' });
+          this.tweens.add({ targets: f, alpha: 0.5, duration: 900 });
         } else {
           // ucieczka od drużyny (Oldgame: flee 4 s z prędkością 5 jednostek/s), znika w oddali
           const dx = f.x - P.x, dz = f.z - P.z, l = Math.hypot(dx, dz) || 1;
           f.sprite.setFlipX(dx - dz < 0);
-          this.tweens.add({ targets: f, x: f.x + (dx / l) * Q(9), z: f.z + (dz / l) * Q(9), alpha: 0, duration: 1600, onComplete: () => (f.dead = true) });
+          this.tweens.add({ targets: f, x: f.x + (dx / l) * Q(9), z: f.z + (dz / l) * Q(9), alpha: 0, duration: 2800, onComplete: () => (f.dead = true) });
         }
-      });
+      }));
     } });
     return true;
   }
