@@ -142,6 +142,25 @@ export class TacticalGrid {
     return { clear: true, cover };
   }
 
+  /** Pola na linii a -> b bez końców (ta sama próbka co linia strzału) - kto stoi na drodze pocisku. */
+  lineCells(a: GridPos, b: GridPos): GridPos[] {
+    const dx = b.gx - a.gx;
+    const dy = b.gy - a.gy;
+    const n = Math.max(2, Math.ceil(Math.hypot(dx, dy) * 3));
+    const out: GridPos[] = [];
+    let last = -1;
+    for (let s = 1; s < n; s++) {
+      const t = s / n;
+      const x = Math.round(a.gx + dx * t);
+      const y = Math.round(a.gy + dy * t);
+      const key = y * this.width + x;
+      if (key === last || (x === a.gx && y === a.gy) || (x === b.gx && y === b.gy)) continue;
+      last = key;
+      out.push({ gx: x, gy: y });
+    }
+    return out;
+  }
+
   /** Linia strzału a -> b. Symetryczna przy blokadzie (sprawdza też b -> a), osłona liczona od strony celu. */
   los(a: GridPos, b: GridPos): LosResult {
     const r = this.clear(a, b);

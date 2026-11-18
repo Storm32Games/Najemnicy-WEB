@@ -994,5 +994,75 @@ function simulateMission(contract: Contract, party: Character[], seed: number): 
   }
 }
 
+// ---------- podopieczni: uwolniony cywil na linii strzału / w polu wybuchu
+{
+  const st = freshState();
+  st.party = ['soldier', 'scout'].map((c, i) => createCharacter({ name: `W${i}`, classId: c as ClassId, ancestry: 'human' }));
+  const contract = { id: 'ward-test', title: 'Uwolnij jeńca', type: 'rescue', level: 2, biome: 'ruins', enemies: ['raider_thug'], objective: { type: 'rescue' }, reward: { scrap: 100, xp: 0, items: [], rep: {} }, faction: 'survivors' } as unknown as Contract;
+  const m = new Mission(contract, st.party, makeRng(5));
+  const cap = m.captive!;
+  const n = cap.actor!;
+  ok(!!n.ch.templateId && /^captive_/.test(n.ch.templateId), 'wards: captive has a PixelLab template');
+  const pc = m.pcs[0];
+  const foe = m.enemies[0];
+  // pole z wolną linią: strzelec, cywil, wróg w jednym rzędzie
+  let row: number[] | null = null;
+  for (let y = 1; y < m.grid.height - 1 && !row; y++) {
+    for (let x = 1; x < m.grid.width - 6 && !row; x++) {
+      if ([0, 1, 2, 3, 4].every((k) => m.grid.isFree(x + k, y))) row = [x, y];
+    }
+  }
+  ok(!!row, 'wards: free row for line-of-fire test');
+  if (row) {
+    const [x, y] = row;
+    Object.assign(pc, { gx: x, gy: y });
+    Object.assign(n, { gx: x + 2, gy: y });
+    Object.assign(cap, { gx: x + 2, gy: y });
+    Object.assign(foe, { gx: x + 4, gy: y });
+    ok(m.combat.wardsOnLine(pc, foe).length === 0 && m.combat.areaTargets(n, 1, pc).every((a) => a !== n), 'wards: captive not at risk before release');
+    Object.assign(m.pcs[1], { gx: x + 3, gy: y });
+    ok(m.interact(m.pcs[1], cap) && cap.freed && !!n.ward && !!n.following, 'wards: captive freed and becomes a ward');
+    ok(m.combat.wardsOnLine(pc, foe)[0] === n, 'wards: freed captive on the line of fire');
+    ok(m.combat.areaTargets(n, 1, pc).includes(n) && !m.combat.areaTargets(n, 1, foe).includes(n), 'wards: merc blast hits the ward, enemy blast does not');
+    // strzały aż pudło poleci w cywila
+    m.mode = 'combat';
+    m.combat.active = true;
+    foe.engaged = true;
+    let strays = 0;
+    m.combat.on((sg) => { if (sg.kind === 'stray') strays++; });
+    pc.ch.equipment.weapon = { id: 'rifle', uid: 'r1', qty: 1 } as never;
+    for (let i = 0; i < 200 && strays === 0; i++) {
+      foe.ch.hp = foe.ch.maxHp;
+      foe.state = 'up';
+      n.ch.hp = 100;
+      n.ch.maxHp = 100;
+      pc.mapN = 0;
+      m.combat.turn = { actor: pc, actions: 3, full: 3, used: false, delayed: false, switched: false };
+      const r = m.combat.strike(pc, foe);
+      if (!r.ok) break;
+    }
+    ok(strays > 0, 'wards: a missed shot can fly into the ward');
+    // śmierć jeńca = zlecenie stracone
+    n.ch.hp = 0;
+    m.combat.syncAll();
+    ok(n.state === 'dead' && m.captiveLost() && !m.objectiveDone() && m.civiliansLost.includes(n.ch.name), 'wards: dead captive fails the rescue');
+    const res = m.finish('retreat');
+    ok(res.civilians?.lost.length === 1, 'wards: result lists lost civilians');
+    const s0 = st.scrap, r0 = st.rep.survivors || 0;
+    st.contracts.push(contract);
+    const sum = applyMissionResult(st, { ...res, result: 'success' }, contract);
+    ok(sum.civilianFine === 25 && (st.rep.survivors || 0) === r0 - 1 && st.scrap >= s0, 'wards: fine and reputation penalty for a killed civilian');
+  }
+  // osadnicy: wygląd PixelLab, zapis flagi podopiecznego
+  const lib = { id: 'lib-test', title: 'Osada', type: 'liberate', level: 2, biome: 'wastes', enemies: ['raider_thug'], objective: { type: 'liberate' } } as unknown as Contract;
+  const ml = new Mission(lib, st.party, makeRng(8));
+  ok(ml.settlers.length >= 3 && ml.settlers.every((t) => /^settler_/.test(t.actor?.ch.templateId ?? '')), 'wards: settlers have PixelLab templates');
+  Object.assign(ml.pcs[0], { gx: ml.settlers[0].gx + 1, gy: ml.settlers[0].gy });
+  ml.interact(ml.pcs[0], ml.settlers[0]);
+  ok(!!ml.settlers[0].actor?.ward, 'wards: freed settler becomes a ward');
+  const ms = new Mission(lib, st.party, makeRng(1), JSON.parse(JSON.stringify(ml.snapshot())));
+  ok(!!ms.settlers[0].actor?.ward && !ms.settlers[1].actor?.ward, 'wards: ward flag survives save/restore');
+}
+
 console.log(`\n${checks} checks, ${fails} failures`);
 process.exit(fails ? 1 : 0);

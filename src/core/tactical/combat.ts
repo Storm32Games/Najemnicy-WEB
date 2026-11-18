@@ -51,6 +51,11 @@ export interface Actor extends GridPos {
   isTarget?: boolean;
   /** Neutralny jeniec idzie za drużyną. */
   following?: boolean;
+  /**
+   * Podopieczny: uwolniony jeniec / osadnik (cywil). Najemnicy mogą go zranić - zabłąkany pocisk, gdy stoi
+   * na linii strzału, albo wybuch, gdy jest w polu rażenia. Przy 0 PW ginie.
+   */
+  ward?: boolean;
 }
 
 export function makeActor(ch: Character, side: Side, pos: GridPos, group: EnemyGroup | null = null): Actor {
@@ -109,6 +114,8 @@ export type CombatSignal =
   | { kind: 'turnEnd'; actor: Actor }
   | { kind: 'move'; actor: Actor; path: GridPos[] }
   | { kind: 'strike'; attacker: Actor; defender: Actor; info: StrikeInfo; result: ActionResult }
+  /** Chybiony strzał najemnika poleciał dalej i trafił (lub minął) podopiecznego na linii strzału. */
+  | { kind: 'stray'; attacker: Actor; ward: Actor; intended: Actor; result: ActionResult }
   | { kind: 'ability'; actor: Actor; ability: AbilityDef; targets: Actor[]; cell?: GridPos; result: ActionResult }
   | { kind: 'item'; actor: Actor; item: ItemInstance; targets: Actor[]; cell?: GridPos; result: ActionResult }
   | { kind: 'rules'; actor: Actor; result: Pick<ActionResult, 'log' | 'events'> }
@@ -229,18 +236,52 @@ export class Combat {
   sync(a: Actor): ActorState {
     const ch = a.ch;
     let s: ActorState = !isAlive(ch) ? 'dead' : isDown(ch) || ch.hp <= 0 ? 'down' : 'up';
-    if (a.side === 'enemy' && s !== 'up') s = 'dead';
+    if (a.side !== 'pc' && s !== 'up') s = 'dead';
     if (s !== a.state) {
       const from = a.state;
       a.state = s;
       if (s === 'dead' && a.side === 'pc') this.log(`${ch.name} POLEGŁ.`, 'bad');
+      else if (s === 'dead' && a.side === 'neutral') this.log(`${ch.name} ginie od ognia drużyny!`, 'bad');
       else if (s === 'up' && from !== 'up') this.log(`${ch.name} wraca do walki.`, 'good');
       this.emit({ kind: 'state', actor: a, from, to: s });
     }
     return s;
   }
   syncAll(): void {
-    for (const a of this.field.actors) if (a.side !== 'neutral') this.sync(a);
+    for (const a of this.field.actors) if (a.side !== 'neutral' || a.ward) this.sync(a);
+  }
+
+  // ---------- podopieczni (uwolnieni cywile)
+  /** Żywi podopieczni (uwolnieni jeńcy / osadnicy), których najemnicy mogą przypadkiem zranić. */
+  get wards(): Actor[] {
+    return this.field.actors.filter((a) => a.side === 'neutral' && a.ward && a.state !== 'dead');
+  }
+  /** Podopieczni stojący na linii strzału `att` -> `def` (od najbliższego strzelcowi). */
+  wardsOnLine(att: GridPos, def: GridPos): Actor[] {
+    const ws = this.wards;
+    if (!ws.length) return [];
+    const out: Actor[] = [];
+    for (const c of this.grid.lineCells(att, def)) {
+      const w = ws.find((x) => x.gx === c.gx && x.gy === c.gy);
+      if (w) out.push(w);
+    }
+    return out;
+  }
+  /**
+   * Zabłąkany pocisk: chybiony strzał najemnika leci dalej i może trafić pierwszego podopiecznego na linii strzału
+   * (zwykły rzut ataku tą samą bronią przeciw jego KP, bez kary PWA).
+   */
+  private strayShot(att: Actor, def: Actor, w: WeaponRef, missed: boolean): void {
+    if (att.side !== 'pc' || !missed) return;
+    const ward = this.wardsOnLine(att, def)[0];
+    if (!ward) return;
+    const nw = normWeapon(w);
+    if (nw.range <= 0) return;
+    const inc = Math.max(0, Math.ceil(cheb(att, ward) / nw.range) - 1);
+    const result = strikeRule(att.ch, ward.ch, { weapon: w, mapIndex: 0, rng: this.rng, rangeIncrements: inc });
+    this.log(`Pocisk ${att.ch.name} leci dalej — na linii strzału stoi ${ward.ch.name}!`, 'bad');
+    this.emit({ kind: 'stray', attacker: att, ward, intended: def, result });
+    this.logAll(result.log, result.hit ? 'bad' : 'dim');
   }
 
   // ---------- informacje o ataku
@@ -473,6 +514,7 @@ export class Combat {
     this.emit({ kind: 'strike', attacker: att, defender: def, info, result });
     if (info.ranged) this.noise(att, 9);
     this.logAll(result.log);
+    if (info.ranged) this.strayShot(att, def, w, !!d && d.degree <= 1);
     this.syncAll();
     this.checkEnd();
     return { ok: true, result };
@@ -516,17 +558,19 @@ export class Combat {
     return [];
   }
 
-  /** Postacie w promieniu wybuchu. */
-  areaTargets(cell: GridPos, radius: number): Actor[] {
-    return this.field.actors.filter((x) => x.side !== 'neutral' && x.state !== 'dead' && Math.hypot(x.gx - cell.gx, x.gy - cell.gy) <= (radius || 1) + 0.45);
+  /** Postacie w promieniu wybuchu. Rzucone przez najemnika (`by`) rani też podopiecznych w polu rażenia. */
+  areaTargets(cell: GridPos, radius: number, by?: Actor): Actor[] {
+    return this.field.actors.filter(
+      (x) => (x.side !== 'neutral' || (by?.side === 'pc' && !!x.ward)) && x.state !== 'dead' && Math.hypot(x.gx - cell.gx, x.gy - cell.gy) <= (radius || 1) + 0.45,
+    );
   }
 
   /** Cele zdolności obszarowej wycelowanej w `cell` (range 0 = wokół siebie). */
   areaTargetsFor(a: Actor, ab: AbilityDef, cell: GridPos = a): Actor[] {
-    const all = this.areaTargets(cell, ab.radius || 1);
+    const all = this.areaTargets(cell, ab.radius || 1, a);
     const aff = areaAffects(ab);
     if (aff === 'allies') return all.filter((x) => x.side === a.side);
-    if (aff === 'foes') return all.filter((x) => x.side !== a.side);
+    if (aff === 'foes') return all.filter((x) => x.side !== a.side && x.side !== 'neutral');
     return all;
   }
 
@@ -597,6 +641,7 @@ export class Combat {
     if (ab.fx === 'shot') this.noise(a, 9);
     else if (ab.fx === 'explosion') this.noise(a, 10);
     this.logAll(result.log);
+    if (ab.fx === 'shot' && ab.target === 'enemy' && tg[0]) this.strayShot(a, tg[0], this.weaponOf(a), !!result.d20 && result.d20.degree <= 1);
     this.syncAll();
     this.checkEnd();
     return { ok: true, result, path };
@@ -622,7 +667,7 @@ export class Combat {
     let targets: Actor[] = [a];
     if (c.target === 'area') {
       if (!cell || !this.areaCellOk(a, cell, c.range || 6)) return fail('Poza zasięgiem.');
-      targets = this.areaTargets(cell, c.radius || 1);
+      targets = this.areaTargets(cell, c.radius || 1, a);
     } else if (c.target !== 'self' && target) {
       if (c.target === 'enemy' && target.side === a.side) return fail('Wskaż wroga.');
       if (c.target !== 'enemy' && target.side !== a.side) return fail('Wskaż sojusznika.');

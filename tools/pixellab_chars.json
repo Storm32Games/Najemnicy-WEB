@@ -58,5 +58,33 @@
  "nomad_hunter": {
   "character_id": "1f6e4d2a-445a-4641-870c-db933316e2bf",
   "job": "c4be7698-e5b4-47c0-872d-7a056d9f036a"
+ },
+ "captive_man": {
+  "character_id": "a7a5faf4-e4e9-489f-a0ab-0ee534d9c8af",
+  "job": "d24a2035-ee36-409e-a91b-3badcaa36b60"
+ },
+ "captive_woman": {
+  "character_id": "861b60f9-72f8-46a3-ab77-a611d71b3d09",
+  "job": "97caa34a-9b2e-41ad-b492-f7da117933f1"
+ },
+ "settler_man": {
+  "character_id": "75c6f5d2-86ac-43e9-94e5-6eaa0cbd71ad",
+  "job": "a0493073-994d-4722-ab46-9d6b8c73883f"
+ },
+ "settler_woman": {
+  "character_id": "dfb7f3e5-be5e-42db-8cfc-99677d846897",
+  "job": "24fcbbe0-4301-4d6e-b1e3-bb610149658a"
+ },
+ "settler_elder": {
+  "character_id": "036f56b0-146a-4b5c-bb1b-223849ebcae9",
+  "job": "caf0bb59-6f7f-45c9-9cd5-9bbfb3fc9bcc"
+ },
+ "settler_shepherd": {
+  "character_id": "eec2bb8f-8971-4589-81dd-a3ea752de915",
+  "job": "5afdc2ac-5023-4cc3-8a9a-98ee9ba1a793"
+ },
+ "settler_smith": {
+  "character_id": "1d4e8475-c8e7-411c-9825-ee0a1d940a6e",
+  "job": "7eaaa21d-8457-485f-b892-d53ed7f14969"
  }
 }

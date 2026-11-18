@@ -37,6 +37,9 @@ export interface DebriefSummary {
   food: number;
   /** Komunikaty o zapasach po upływie dni podróży (strata, głód). */
   foodNotes: string[];
+  /** Podopieczni (uwolnieni cywile) zabici przez drużynę i potrącony za nich Złom z nagrody. */
+  civiliansLost: string[];
+  civilianFine: number;
 }
 
 /**
@@ -50,7 +53,7 @@ export function applyMissionResult(state: CampaignState, mission: MissionResult,
   const retreat = result === 'retreat';
   const mult = ok ? 1 : retreat ? 0.5 : 0;
   const rw = c?.reward ?? { scrap: 0, xp: 0, items: [], rep: {} };
-  const out: DebriefSummary = { contract: c, result, scrap: 0, stolen: 0, xp: 0, items: [], rep: {}, fallen: [], members: [], story: false, win: false, tpk: false, food: 0, foodNotes: [] };
+  const out: DebriefSummary = { contract: c, result, scrap: 0, stolen: 0, xp: 0, items: [], rep: {}, fallen: [], members: [], story: false, win: false, tpk: false, food: 0, foodNotes: [], civiliansLost: [], civilianFine: 0 };
 
   // polegli
   const names = new Set(mission.casualties);
@@ -69,6 +72,13 @@ export function applyMissionResult(state: CampaignState, mission: MissionResult,
     out.scrap += m.stolenScrap;
     out.stolen += m.stolenScrap;
     m.stolenScrap = 0;
+  }
+  // zabici podopieczni: -25% Złomu z nagrody za każdego (najwyżej cała nagroda)
+  const lost = mission.civilians?.lost ?? [];
+  if (lost.length) {
+    out.civiliansLost = lost.slice();
+    out.civilianFine = Math.min(Math.round(rw.scrap * mult), Math.round(rw.scrap * mult * 0.25 * lost.length));
+    out.scrap -= out.civilianFine;
   }
   // zakupy u nomadów na misji schodzą z kasy zawsze (także przy porażce)
   if (mission.nomads?.spent) out.scrap -= mission.nomads.spent;
@@ -105,6 +115,13 @@ export function applyMissionResult(state: CampaignState, mission: MissionResult,
     const f = c?.faction ?? 'survivors';
     state.rep[f] = (state.rep[f] || 0) - 1;
     out.rep[f] = -1;
+  }
+
+  // zabici podopieczni: -1 reputacji u zleceniodawcy za każdego
+  if (lost.length) {
+    const f = c?.faction ?? 'survivors';
+    state.rep[f] = (state.rep[f] || 0) - lost.length;
+    out.rep[f] = (out.rep[f] ?? 0) - lost.length;
   }
 
   // nomadzi spotkani na misji (rozmowa, kradzież z namiotu): reputacja bez względu na wynik zlecenia

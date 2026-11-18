@@ -97,6 +97,8 @@ export interface MissionResult {
   supplies?: { got: number; total: number };
   /** Nomadzi: Złom wydany na zakupy (zawsze schodzi z kasy) i zmiana reputacji u Nomadów. */
   nomads?: { spent: number; rep: number };
+  /** Podopieczni (uwolnieni cywile) zabici przez drużynę: kara do nagrody i reputacji. */
+  civilians?: { lost: string[] };
 }
 
 /** Postać w zapisie misji: najemnik jako indeks w drużynie kampanii (ten sam obiekt po wczytaniu), reszta z pełną kartą. */
@@ -110,6 +112,7 @@ export interface ActorSnapshot extends GridPos {
   roam?: { home: GridPos; dest: GridPos | null } | null;
   isTarget?: boolean;
   following?: boolean;
+  ward?: boolean;
 }
 export interface ThingSnapshot extends Omit<MissionThing, 'actor'> {
   actor?: number;
@@ -142,6 +145,8 @@ export interface MissionSnapshot {
   /** Nomadzi: wydany Złom i zmiana reputacji (brak w starszych zapisach). */
   nomadSpent?: number;
   nomadRep?: number;
+  /** Podopieczni zabici przez drużynę (brak w starszych zapisach). */
+  civiliansLost?: string[];
 }
 
 export type MissionSignal =
@@ -180,6 +185,27 @@ const FIND_NAMES: Readonly<Record<FindKind, string>> = {
   scrap: 'stertę złomu', cache: 'ukrytą skrytkę', medical: 'porzuconą apteczkę', tech: 'resztki elektroniki', food: 'zapasy jedzenia', ammo: 'skrzynkę amunicji',
 };
 /** Zasięg wzroku najemnika / jeńca (pola). */
+/** Cywile do uwolnienia z wyglądem PixelLab (src/assets/units/<id>/, tools/pixellab_chars.py). */
+export const CAPTIVES: readonly { id: `captive_${string}`; name: string }[] = [
+  { id: 'captive_man', name: 'Jeniec' },
+  { id: 'captive_woman', name: 'Branka' },
+];
+export const SETTLERS: readonly { id: `settler_${string}`; name: string }[] = [
+  { id: 'settler_man', name: 'Osadnik' },
+  { id: 'settler_woman', name: 'Osadniczka' },
+  { id: 'settler_elder', name: 'Starzec' },
+  { id: 'settler_shepherd', name: 'Pasterz' },
+  { id: 'settler_smith', name: 'Kowalka' },
+];
+/** Bezbronny cywil (10 PW); `templateId` wskazuje sprite i portret PixelLab. */
+function civilian(name: string, templateId: `captive_${string}` | `settler_${string}`): Character {
+  const ch = createCharacter({ name, classId: 'scavenger', ancestry: 'human' });
+  ch.maxHp = 10;
+  ch.hp = 10;
+  ch.templateId = templateId;
+  return ch;
+}
+
 export const SIGHT_PC = 9;
 export const SIGHT_NEUTRAL = 5;
 
@@ -227,6 +253,8 @@ export class Mission {
   nomadRep = 0;
   /** Reputacja u Nomadów z kampanii (ustawia scena; ceny i trudność rozmowy). */
   nomadStanding = 0;
+  /** Imiona podopiecznych zabitych przez drużynę (zabłąkany pocisk, wybuch). */
+  civiliansLost: string[] = [];
   private listeners = new Set<(s: MissionSignal) => void>();
   /** Drużyna kampanii z wejścia (indeksy najemników w zapisie). */
   private readonly party: readonly Character[];
@@ -251,7 +279,7 @@ export class Mission {
     this.combat = new Combat(
       {
         grid: this.grid, actors: this.actors, groups: this.groups, target: this.target,
-        isBlocked: (gx, gy) => this.neutral.some((n) => n.gx === gx && n.gy === gy),
+        isBlocked: (gx, gy) => this.neutral.some((n) => n.state !== 'dead' && n.gx === gx && n.gy === gy),
         inSight: (a) => this.isVisible(a),
         freeActions: () => this.mode === 'explore',
         onBlast: (cell, radius) => this.igniteWrecks(cell, radius),
@@ -259,7 +287,12 @@ export class Mission {
       rng,
     );
     this.combat.on((s) => {
-      if (s.kind === 'state' && s.actor.side === 'enemy' && s.to === 'dead' && !this.killed.includes(s.actor.ch)) {
+      if (s.kind === 'state' && s.actor.side === 'neutral' && s.to === 'dead') {
+        // podopieczny zginął od ognia drużyny
+        s.actor.following = false;
+        if (!this.civiliansLost.includes(s.actor.ch.name)) this.civiliansLost.push(s.actor.ch.name);
+        this.emitObjectives();
+      } else if (s.kind === 'state' && s.actor.side === 'enemy' && s.to === 'dead' && !this.killed.includes(s.actor.ch)) {
         this.killed.push(s.actor.ch);
         if (s.actor === this.target) this.log('CEL ELIMINOWANY', 'good');
         this.emitObjectives();
@@ -312,13 +345,12 @@ export class Mission {
       this.itemThing = { kind: 'item', gx: oc.gx, gy: oc.gy, done: false, name: itemDef(itemId)?.name ?? 'Cel zlecenia', itemId };
       this.things.push(this.itemThing);
     } else if (oc && this.objType === 'rescue') {
-      const ch = createCharacter({ name: 'Jeniec', classId: 'scavenger', ancestry: 'human' });
-      ch.maxHp = 10;
-      ch.hp = 10;
+      const cv = CAPTIVES[Math.floor(this.rng() * CAPTIVES.length)];
+      const ch = civilian(cv.name, cv.id);
       const a = makeActor(ch, 'neutral', oc);
       this.neutral.push(a);
       this.actors.push(a);
-      this.captive = { kind: 'captive', gx: oc.gx, gy: oc.gy, done: false, name: 'Jeniec', actor: a };
+      this.captive = { kind: 'captive', gx: oc.gx, gy: oc.gy, done: false, name: cv.name, actor: a };
       this.things.push(this.captive);
     } else if (oc && this.objType === 'hack') {
       const c = this.solidSpot(oc) ?? this.freeCell(oc, 1, 4, true) ?? oc;
@@ -326,14 +358,12 @@ export class Mission {
       this.objDevice.objective = true;
       this.grid.setKind(c.gx, c.gy, CellKind.LOW);
     } else if (oc && this.objType === 'liberate') {
-      const NAMES = ['Osadnik', 'Osadniczka', 'Starzec', 'Pasterz', 'Kowalka'];
       const n = 3 + (this.level >= 4 ? 1 : 0);
       for (let i = 0; i < n; i++) {
         const c = i === 0 ? oc : this.freeCell(oc, 1.5, 5);
         if (!c) break;
-        const ch = createCharacter({ name: NAMES[i % NAMES.length], classId: 'scavenger', ancestry: 'human' });
-        ch.maxHp = 10;
-        ch.hp = 10;
+        const sv = SETTLERS[i % SETTLERS.length];
+        const ch = civilian(sv.name, sv.id);
         const a = makeActor(ch, 'neutral', c);
         this.neutral.push(a);
         this.actors.push(a);
@@ -418,7 +448,7 @@ export class Mission {
         return {
           ...(pc >= 0 ? { pc } : { ch: clone(a.ch) }),
           side: a.side, gx: a.gx, gy: a.gy, state: a.state, group: a.group ? this.groups.indexOf(a.group) : null,
-          engaged: a.engaged, roam: a.roam ? clone(a.roam) : null, isTarget: a.isTarget, following: a.following,
+          engaged: a.engaged, roam: a.roam ? clone(a.roam) : null, isTarget: a.isTarget, following: a.following, ward: a.ward,
         };
       }),
       groups: this.groups.map((g) => ({ alerted: g.alerted, nextNotice: g.nextNotice, center: { ...g.center } })),
@@ -439,6 +469,7 @@ export class Mission {
       killed: this.killed.map((ch) => this.actors.findIndex((a) => a.ch === ch)).filter((i) => i >= 0),
       explored: Array.from(this.explored, (v) => (v ? '1' : '0')).join(''),
       nomadSpent: this.nomadSpent,
+      civiliansLost: this.civiliansLost.slice(),
       nomadRep: this.nomadRep,
     };
   }
@@ -462,6 +493,7 @@ export class Mission {
         target = a;
       }
       if (r.following) a.following = true;
+      if (r.ward) a.ward = true;
       grp?.actors.push(a);
       this.actors.push(a);
       (r.side === 'pc' ? this.pcs : r.side === 'enemy' ? this.enemies : this.neutral).push(a);
@@ -489,6 +521,7 @@ export class Mission {
     this.loot = s.loot;
     this.killed = s.killed.map((i) => this.actors[i]?.ch).filter((c): c is Character => !!c);
     this.nomadSpent = s.nomadSpent ?? 0;
+    this.civiliansLost = s.civiliansLost?.slice() ?? [];
     this.nomadRep = s.nomadRep ?? 0;
     return target;
   }
@@ -708,7 +741,7 @@ export class Mission {
   followNeutral(lead: Actor): GridPos[] | null {
     const cap = this.captive;
     const n = cap?.actor;
-    if (!cap || !cap.freed || !n) return null;
+    if (!cap || !cap.freed || !n || n.state === 'dead') return null;
     const c = this.nearestFree(lead, n, new Set(this.pcs.map((p) => this.grid.index(p.gx, p.gy))));
     if (!c) return null;
     const p = this.grid.findPath(n, c, () => true, 60);
@@ -985,6 +1018,7 @@ export class Mission {
     if (th.kind === 'captive' && th.objective) {
       th.done = true;
       th.freed = true;
+      if (th.actor) th.actor.ward = true;
       this.log(`${a.ch.name} uwalnia: ${th.name}.`, 'good');
       this.emit({ kind: 'interact', thing: th, by: a });
       this.updateVisibility();
@@ -995,7 +1029,10 @@ export class Mission {
     if (th.kind === 'captive') {
       th.done = true;
       th.freed = true;
-      if (th.actor) th.actor.following = true;
+      if (th.actor) {
+        th.actor.following = true;
+        th.actor.ward = true;
+      }
       this.stage = Math.max(this.stage, 1);
       this.log(`${a.ch.name} uwalnia jeńca. Trzeba go wyprowadzić do strefy ewakuacji.`, 'good');
       this.emit({ kind: 'interact', thing: th, by: a });
@@ -1383,7 +1420,7 @@ export class Mission {
     this.log(`${th.name} staje w ogniu i wybucha!`, 'bad');
     const hits: { actor: Actor; dmg: number }[] = [];
     for (const x of this.actors) {
-      if (x.state === 'dead' || cheb(x, th) > 1) continue;
+      if (x.state === 'dead' || (x.side === 'neutral' && !x.ward) || cheb(x, th) > 1) continue;
       const out = applyDamage(x.ch, roll('2d6', this.rng).total, 'fire');
       hits.push({ actor: x, dmg: out.dealt });
       this.log(`${x.ch.name}: ${out.dealt} obrażeń od ognia.`, x.side === 'pc' ? 'bad' : 'amber');
@@ -1451,7 +1488,17 @@ export class Mission {
 
   // ---------- cele i ewakuacja
   objectiveDone(): boolean {
-    return this.stage >= 1;
+    return this.stage >= 1 && !this.captiveLost();
+  }
+  /** Ratunek: jeniec zginął (od ognia drużyny) - zlecenia nie da się już zaliczyć. */
+  captiveLost(): boolean {
+    return this.objType === 'rescue' && this.captive?.actor?.state === 'dead';
+  }
+  /** Cywile do ochrony (jeniec, osadnicy) z portretami w HUD-zie: uwolniony = podopieczny. */
+  civilians(): { actor: Actor; freed: boolean }[] {
+    const out: { actor: Actor; freed: boolean }[] = [];
+    for (const th of [this.captive, ...this.settlers]) if (th?.actor) out.push({ actor: th.actor, freed: !!th.freed });
+    return out;
   }
   /** Czy po wykonaniu celu trzeba wrócić do strefy ewakuacji (bez tego - ewakuacja w dowolnej chwili). */
   needsExtraction(): boolean {
@@ -1538,10 +1585,14 @@ export class Mission {
     } else if (t === 'retrieve') {
       L.push({ text: `Odzyskaj: ${this.itemThing?.name ?? 'cel'}`, done: this.stage >= 1 });
       L.push({ text: 'Wróć do strefy ewakuacji', done: false, go: this.stage >= 1 });
+    } else if (this.captiveLost()) {
+      L.push({ text: `${this.captive?.name ?? 'Jeniec'} nie żyje — zlecenie stracone`, done: false, tone: 'bad' });
+      L.push({ text: 'Wycofaj się (Odwrót)', done: false, go: true });
     } else {
-      L.push({ text: 'Znajdź i uwolnij jeńca', done: this.stage >= 1 });
-      L.push({ text: 'Doprowadź go do strefy ewakuacji', done: false, go: this.stage >= 1 });
+      L.push({ text: `Znajdź i uwolnij: ${this.captive?.name ?? 'jeniec'}`, done: this.stage >= 1 });
+      L.push({ text: 'Doprowadź do strefy ewakuacji (uważaj na linię strzału)', done: false, go: this.stage >= 1 });
     }
+    if (this.civiliansLost.length && this.objType !== 'rescue') L.push({ text: `Zabici cywile: ${this.civiliansLost.join(', ')}`, done: false, tone: 'bad' });
     if (this.stage >= 1 && !this.needsExtraction()) L.push({ text: 'Cel wykonany: przeszukaj teren lub wróć do ewakuacji', done: false, go: true });
     const crates = this.things.filter((x) => x.kind === 'crate');
     L.push({ text: `Skrzynie: ${crates.filter((x) => x.done).length}/${crates.length}`, done: false, tone: 'dim' });
@@ -1557,7 +1608,7 @@ export class Mission {
     const up = this.pcs.filter((p) => p.state === 'up');
     if (!up.length || !up.every((p) => this.inExtraction(p))) return false;
     const cap = this.captive;
-    return !cap || !cap.freed || !cap.actor || this.inExtraction(cap.actor);
+    return !cap || !cap.freed || !cap.actor || cap.actor.state === 'dead' || this.inExtraction(cap.actor);
   }
 
   // ---------- zakończenie
@@ -1581,6 +1632,7 @@ export class Mission {
       if (result !== 'fail') endEncounter(a.ch);
     }
     this.result = { contractId: this.contract.id, result, xp, loot: this.loot.slice(), scrap: this.scrap, casualties };
+    if (this.civiliansLost.length) this.result.civilians = { lost: this.civiliansLost.slice() };
     if (this.nomadSpent || this.nomadRep) this.result.nomads = { spent: this.nomadSpent, rep: this.nomadRep };
     if (this.objType === 'forage') this.result.supplies = { got: this.supplies.filter((x) => x.done).length, total: this.supplies.length };
     this.emit({ kind: 'finish', result: this.result });
