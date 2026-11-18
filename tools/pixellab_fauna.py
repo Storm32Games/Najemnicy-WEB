@@ -53,8 +53,9 @@ ACT={
  'bite':'lunges forward and attacks with a vicious bite / strike, then recoils back to its stance',
  'die':'is mortally wounded, staggers and collapses to the ground on its side, lies still',
 }
-# śmierć szczura, skorpiona, drona i wieżyczki (część kierunków): model v3 zostawiał ich stojących (3 z 4 kierunków), pixminimax kładzie je na ziemi
+# śmierć szczura, skorpiona, drona, wieżyczki i roju (część kierunków): model v3 zostawiał ich stojących (3 z 4 kierunków), pixminimax kładzie je na ziemi
 ACT_DIE={
+ 'fly_swarm':'dies: the swarm stops flying, all the flies fall down out of the air and land on the ground, ending as dead flies scattered flat on the ground, nothing left in the air',
  'drone':'is shot down: sparks and black smoke burst out, it tilts, falls out of the air and crashes onto the ground, ending as a broken smoking wreck lying flat on the ground',
  'turret':'is destroyed: an explosion bursts from the gun head, the armored head breaks off and the barrels droop to the ground, ending as a smoking collapsed wreck',
  'rat_mutant':'dies: collapses and falls over onto its side, ending lying flat and motionless on the ground',
@@ -72,7 +73,7 @@ ACT_ID={
               'bite':'the swarm surges forward and engulfs the target in a dense stinging cloud, then pulls back',
               'die':'the swarm disperses, dead flies drop and fall to the ground, ending as scattered dead flies on the ground'},
 }
-POSE0={'drone':'hovering in the air','turret':'standing intact on its mount'}
+POSE0={'drone':'hovering in the air','turret':'standing intact on its mount','fly_swarm':'flies hovering in the air'}
 FB=['south-east','north-east','south-west','north-west']
 ALL8=['south','south-east','east','north-east','north','north-west','west','south-west']
 ROOT=os.path.join(os.path.dirname(os.path.abspath(__file__)),'..','src','assets','units')

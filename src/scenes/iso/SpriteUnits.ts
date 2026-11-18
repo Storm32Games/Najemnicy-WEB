@@ -12,6 +12,7 @@
 // Klatki są w 2x gęstości projektowej (64 px obrazu = 32 px projektowe): klatka 32x36 px projektowych, stopy w
 // (16, 31.5) - ten sam punkt zaczepienia (UNIT_FOOT_X / UNIT_FW, UNIT_FOOT_Y / UNIT_FH = 0.5, 0.875) co klatki 24x32.
 import type Phaser from 'phaser';
+import { ENEMIES } from '../../core/data/enemies';
 import { RECRUITS } from '../../core/data/recruits';
 import { PixelCanvas } from './Pixel';
 import { ANIMS, ANIM_ORDER, BASE_ANIMS, type Pose, type UnitSheet } from './UnitArt';
@@ -294,6 +295,17 @@ function tint(pc: PixelCanvas, c: number, k: number): void {
 }
 
 /** Kałuża pod ciałem: elipsa z ditheringiem na krawędzi, rysowana pod istniejącymi pikselami. */
+/** Kolory plamy pod zwłokami (środek, brzeg): krew, olej maszyny, posoka roju (cecha szablonu wroga). */
+type Fluid = readonly [number, number];
+const BLOOD: Fluid = [0x6a0f0c, 0x4a0a0a];
+const FLUIDS: Record<string, Fluid> = { machine: [0x26241f, 0x16140f], swarm: [0x4a5a12, 0x2e3a0c] };
+let fluid: Fluid = BLOOD;
+function fluidOf(id: string): Fluid {
+  const traits: readonly string[] = (ENEMIES as Record<string, { traits?: readonly string[] }>)[id]?.traits ?? [];
+  const t = traits.find((k) => k in FLUIDS);
+  return t ? FLUIDS[t] : BLOOD;
+}
+
 function puddle(pc: PixelCanvas, size: number): void {
   const rx = 20 * size, ry = 6 * size, cy = FOOT_Y + 3;
   for (let y = Math.floor(cy - ry); y <= cy + ry; y++)
@@ -301,7 +313,7 @@ function puddle(pc: PixelCanvas, size: number): void {
       const d = ((x - FOOT_X) / rx) ** 2 + ((y - cy) / ry) ** 2;
       if (d > 1 || pc.alpha(x, y)) continue;
       if (d > 0.7 && (x + y) % 2) continue;
-      pc.set(x, y, d < 0.35 ? 0x6a0f0c : 0x4a0a0a);
+      pc.set(x, y, d < 0.35 ? fluid[0] : fluid[1]);
     }
 }
 
@@ -457,10 +469,12 @@ function stripCell(rest: Src, first: Src, f: Src, ground: boolean): PixelCanvas 
  */
 export function paintSpriteSheet(scene: Phaser.Scene, id: string, beast = false): UnitSheet & { density: number; anims: SheetAnim[] } {
   cellSize(beast);
+  fluid = fluidOf(spriteBaseId(id));
   try {
     return paintSheet(scene, id, beast);
   } finally {
     cellSize(false);
+    fluid = BLOOD;
   }
 }
 
