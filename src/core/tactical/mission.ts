@@ -6,7 +6,8 @@ import type { EnemyId, ItemId, SkillId } from '../data/types.ts';
 import { createCharacter, createEnemy, encounterXP, endEncounter, newItem, partyLevel, rollLoot } from '../rules/character.ts';
 import { applyDamage, isAlive } from '../rules/damage.ts';
 import { check, dcForLevel, roll, type CheckResult, type Rng } from '../rules/dice.ts';
-import { allItems, itemDef } from '../rules/lookup.ts';
+import { allItems, enemyDef, itemDef } from '../rules/lookup.ts';
+import { addToStack } from '../rules/equipment.ts';
 import { checkBy, getStat } from '../rules/stats.ts';
 import { skillCheck } from '../rules/turn.ts';
 import {
@@ -16,6 +17,9 @@ import {
 import type { Character, GridPos, ItemInstance } from '../rules/types.ts';
 import { Combat, makeActor, type Actor, type ActorState, type CombatEnd, type EnemyGroup, type LogTone, type Side } from './combat.ts';
 import { CellKind, cheb, dist, TacticalGrid, UNREACHABLE } from './grid.ts';
+import {
+  campSites, HAGGLE_MULT, nomadSells, MAX_NOMADS, NOMAD_CHANCE, NOMAD_KINDS, NOMADS, nomadPrice, TENT_LOOT, type NomadState,
+} from './nomads.ts';
 import { generateMap, inEntryZone, WRECK_TYPES, wreckBurnt, type Biome, type FindKind, type FindSpawn, type TacticalMap } from './mapgen.ts';
 
 export type ObjectiveType = 'eliminate' | 'retrieve' | 'rescue' | 'hunt' | 'boss' | 'hack' | 'liberate' | 'purge' | 'defend' | 'forage';
@@ -39,7 +43,8 @@ export interface MissionContract {
 /** door = zamknięte drzwi (wytrych / wyważenie), device = urządzenie elektroniczne (hakowanie). */
 /** nest = gniazdo zmutowanej fauny (zlecenie oczyszczenia). */
 /** wreck = wrak samochodu / autobusu do rozebrania na złom (może wybuchnąć). */
-export type ThingKind = 'crate' | 'item' | 'captive' | 'door' | 'device' | 'nest' | 'wreck';
+/** nomad = nomad przy ognisku (rozmowa, handel), tent = namiot do przeszukania (pusty albo nomada). */
+export type ThingKind = 'crate' | 'item' | 'captive' | 'door' | 'device' | 'nest' | 'wreck' | 'nomad' | 'tent';
 export interface MissionThing extends GridPos {
   kind: ThingKind;
   name: string;
@@ -59,6 +64,14 @@ export interface MissionThing extends GridPos {
   bus?: boolean;
   burnt?: boolean;
   exploded?: boolean;
+  /** Nomad: stan rozmowy i handlu. */
+  nomad?: NomadState;
+  /** Obóz (indeks w campSites): łączy namiot z nomadem przy tym samym ognisku. */
+  camp?: number;
+}
+/** Wskazówka od nomada: miejsce na mapie z opisem. */
+export interface IntelPoint extends GridPos {
+  text: string;
 }
 export interface MissionFind extends FindSpawn {
   found: boolean;
@@ -82,6 +95,8 @@ export interface MissionResult {
   casualties: string[];
   /** Zaopatrzenie: zebrane skrzynie z żywnością (odwrót = żywność proporcjonalnie). */
   supplies?: { got: number; total: number };
+  /** Nomadzi: Złom wydany na zakupy (zawsze schodzi z kasy) i zmiana reputacji u Nomadów. */
+  nomads?: { spent: number; rep: number };
 }
 
 /** Postać w zapisie misji: najemnik jako indeks w drużynie kampanii (ten sam obiekt po wczytaniu), reszta z pełną kartą. */
@@ -124,6 +139,9 @@ export interface MissionSnapshot {
   killed: number[];
   /** Odkryte pola: '0' / '1' na pole. */
   explored: string;
+  /** Nomadzi: wydany Złom i zmiana reputacji (brak w starszych zapisach). */
+  nomadSpent?: number;
+  nomadRep?: number;
 }
 
 export type MissionSignal =
@@ -140,6 +158,8 @@ export type MissionSignal =
   /** Próba otwarcia drzwi wytrychem / wyważenia albo hakowania urządzenia. */
   | { kind: 'lock'; thing: MissionThing; by: Actor; attempt: LockAttempt; hack: boolean }
   | { kind: 'objective'; lines: ObjectiveLine[] }
+  | { kind: 'intel'; by: Actor; nomad: MissionThing; points: IntelPoint[]; finds: MissionFind[] }
+  | { kind: 'tent'; thing: MissionThing; by: Actor; roll: CheckResult; scrap: number; items: ItemInstance[]; caught: boolean }
   /** Cel zlecenia wykonany; `leftovers` = co jeszcze zostało na terenie (łupy, wrogowie, ukryte znaleziska). */
   | { kind: 'complete'; leftovers: string[] }
   | { kind: 'visibility' }
@@ -202,6 +222,11 @@ export class Mission {
   readonly explored: Uint8Array;
   readonly vis: Uint8Array;
   result: MissionResult | null = null;
+  /** Nomadzi: Złom wydany na zakupy w tej misji i zmiana reputacji u Nomadów. */
+  nomadSpent = 0;
+  nomadRep = 0;
+  /** Reputacja u Nomadów z kampanii (ustawia scena; ceny i trudność rozmowy). */
+  nomadStanding = 0;
   private listeners = new Set<(s: MissionSignal) => void>();
   /** Drużyna kampanii z wejścia (indeksy najemników w zapisie). */
   private readonly party: readonly Character[];
@@ -344,8 +369,37 @@ export class Mission {
         this.things.push(th);
       }
     }
+    if (this.objType !== 'defend') this.populateCamps();
 
     return target;
+  }
+
+  /** Obozy: przy części ognisk siedzi nomad; namioty da się przeszukać. */
+  private populateCamps(): void {
+    let left = MAX_NOMADS;
+    const kinds = [...NOMAD_KINDS].sort(() => this.rng() - 0.5);
+    campSites(this.map).forEach((c, ci) => {
+      if (c.tent && !inEntryZone(this.map.entry, c.tent)) {
+        this.things.push({ kind: 'tent', gx: c.tent.gx, gy: c.tent.gy, done: false, name: 'Namiot', camp: ci });
+      }
+      if (left <= 0 || this.rng() >= NOMAD_CHANCE) return;
+      const cell = this.pickCell((r) => cheb(r, c.fire) === 1 && !(c.tent && r.gx === c.tent.gx && r.gy === c.tent.gy));
+      if (!cell) return;
+      const kind = kinds[(MAX_NOMADS - left) % kinds.length];
+      const def = NOMADS[kind];
+      const ch = createCharacter({ name: def.names[Math.floor(this.rng() * def.names.length)], classId: 'scout', ancestry: 'human' });
+      ch.templateId = kind;
+      ch.maxHp = 20;
+      ch.hp = 20;
+      const a = makeActor(ch, 'neutral', cell);
+      this.neutral.push(a);
+      this.actors.push(a);
+      const pool = def.stock.filter((id) => (itemDef(id)?.level ?? 0) <= this.level + 1 && nomadSells(id));
+      const wares = pool.sort(() => this.rng() - 0.5).slice(0, 3).map((id) => ({ id, sold: false }));
+      const nomad: NomadState = { kind, asked: false, haggle: null, wares, offended: false, greet: Math.floor(this.rng() * def.greet.length) };
+      this.things.push({ kind: 'nomad', gx: cell.gx, gy: cell.gy, done: false, name: ch.name, actor: a, nomad, camp: ci });
+      left--;
+    });
   }
 
   // ---------- zapis
@@ -384,6 +438,8 @@ export class Mission {
       loot: clone(this.loot),
       killed: this.killed.map((ch) => this.actors.findIndex((a) => a.ch === ch)).filter((i) => i >= 0),
       explored: Array.from(this.explored, (v) => (v ? '1' : '0')).join(''),
+      nomadSpent: this.nomadSpent,
+      nomadRep: this.nomadRep,
     };
   }
 
@@ -432,6 +488,8 @@ export class Mission {
     this.scrap = s.scrap;
     this.loot = s.loot;
     this.killed = s.killed.map((i) => this.actors[i]?.ch).filter((c): c is Character => !!c);
+    this.nomadSpent = s.nomadSpent ?? 0;
+    this.nomadRep = s.nomadRep ?? 0;
     return target;
   }
 
@@ -883,6 +941,12 @@ export class Mission {
    */
   interact(a: Actor, th: MissionThing, skill?: SkillId): boolean {
     if (th.done || cheb(a, th) > 1 || a.state !== 'up') return false;
+    // rozmowa z nomadem: okno w scenie (askNomad / haggleNomad / buyFromNomad), tylko poza walką
+    if (th.kind === 'nomad') return false;
+    if (th.kind === 'tent') {
+      if (this.mode === 'combat' && !this.combat.spendActions(a, 1)) return false;
+      return this.searchTent(a, th);
+    }
     // Oldgame combat.js:450: akcja schodzi tylko, gdy interakcja się udała.
     if ((th.kind === 'crate' || th.kind === 'door' || th.kind === 'device') && !skill) return false;
     if ((th.kind === 'door' || th.kind === 'device') && th.lock?.jammed) return false;
@@ -1031,6 +1095,194 @@ export class Mission {
       }
     }
     return best;
+  }
+
+  // ---------- nomadzi i namioty
+  /** Nomad z obozu namiotu (żywy, nieobrażony i stojący przy ognisku) albo null. */
+  tentOwner(th: MissionThing): MissionThing | null {
+    if (th.camp === undefined) return null;
+    return this.things.find((x) => x.kind === 'nomad' && x.camp === th.camp && !x.nomad?.offended && x.actor?.state === 'up') ?? null;
+  }
+  /** ST rozmowy z nomadem: poziom misji - 2, lepiej przy dobrej reputacji u Nomadów. */
+  nomadDC(): number {
+    return dcForLevel(this.level) - 2 - Math.max(-2, Math.min(3, Math.trunc(this.nomadStanding / 2)));
+  }
+  /** ST kradzieży z namiotu nomada (jego Percepcja). */
+  tentStealDC(): number {
+    return dcForLevel(this.level) + 2;
+  }
+  private nomadDef(th: MissionThing) {
+    return th.nomad ? NOMADS[th.nomad.kind] : null;
+  }
+  private bumpNomadRep(d: number): void {
+    // najwyżej +1 / -2 na misję z rozmów, żeby nie dało się nabijać reputacji
+    this.nomadRep = Math.max(-2, Math.min(1, this.nomadRep + d));
+  }
+
+  /**
+   * Przeszukanie namiotu (Percepcja). Namiot nomada: kradzież (Złodziejstwo vs ST) - przyłapany złodziej obraża
+   * nomada (koniec handlu, -1 reputacji u Nomadów) i nic nie dostaje.
+   */
+  searchTent(a: Actor, th: MissionThing): boolean {
+    if (th.kind !== 'tent' || th.done) return false;
+    const owner = this.tentOwner(th);
+    th.done = true;
+    const skill: SkillId = owner ? 'thievery' : 'perception';
+    const dc = owner ? this.tentStealDC() : dcForLevel(this.level) - 1;
+    const r = skillCheck(a.ch, skill, dc, this.rng);
+    const DEG = ['KRYTYCZNA PORAŻKA', 'porażka', 'sukces', 'KRYTYCZNY SUKCES'];
+    this.log(`${a.ch.name}: ${SKILLS[skill]?.name ?? skill} ${r.total} vs KT ${dc} — ${DEG[r.degree]}`, r.degree >= 2 ? 'good' : 'bad');
+    const items: ItemInstance[] = [];
+    let scrap = 0;
+    const caught = !!owner && r.degree <= 1;
+    if (caught && owner?.nomad) {
+      owner.nomad.offended = true;
+      this.bumpNomadRep(-1);
+      this.log(`${owner.name} przyłapuje ${a.ch.nameAcc ?? a.ch.name} na grzebaniu w namiocie! Nomad nie chce mieć z wami nic wspólnego (-1 reputacji u Nomadów).`, 'bad');
+    } else {
+      const n = r.degree === 3 ? 2 : r.degree === 2 ? 1 : 0;
+      scrap = r.degree >= 2 ? Math.round((3 + this.rng() * 8) * (1 + this.level * 0.3)) : r.degree === 1 ? 2 : 0;
+      for (let i = 0; i < n; i++) {
+        const inst = newItem(TENT_LOOT[Math.floor(this.rng() * TENT_LOOT.length)]);
+        this.loot.push(inst);
+        items.push(inst);
+      }
+      if (r.degree === 1 && !owner && this.rng() < 0.5) {
+        const inst = newItem('canned_food');
+        this.loot.push(inst);
+        items.push(inst);
+      }
+      this.scrap += scrap;
+      const got = [...(scrap ? [`${scrap} Złomu`] : []), ...items.map((i) => itemDef(i.id)?.name ?? i.id)];
+      this.log(got.length ? `${a.ch.name} przeszukuje namiot${owner ? ' ukradkiem' : ''}: ${got.join(', ')}.` : `${a.ch.name} przeszukuje namiot — nic cennego.`, got.length ? 'good' : 'dim');
+    }
+    this.emit({ kind: 'tent', thing: th, by: a, roll: r, scrap, items, caught });
+    this.emitObjectives();
+    return true;
+  }
+
+  /**
+   * Wypytanie nomada o okolicę (raz): Dyplomacja albo Zastraszanie (-1 reputacji u Nomadów, kryt. porażka obraża).
+   * Sukces: wskazówki wg tego, co nomad wie; kryt. sukces: wszystko, co wie każdy nomad, i +1 reputacji.
+   */
+  askNomad(a: Actor, th: MissionThing, skill: SkillId): CheckResult | null {
+    const st = th.nomad;
+    const def = this.nomadDef(th);
+    if (!st || !def || st.asked || st.offended || this.mode !== 'explore') return null;
+    st.asked = true;
+    const dc = this.nomadDC() + (skill === 'intimidation' ? 2 : 0);
+    const r = skillCheck(a.ch, skill, dc, this.rng);
+    const DEG = ['KRYTYCZNA PORAŻKA', 'porażka', 'sukces', 'KRYTYCZNY SUKCES'];
+    this.log(`${a.ch.name}: ${SKILLS[skill]?.name ?? skill} ${r.total} vs KT ${dc} — ${DEG[r.degree]}`, r.degree >= 2 ? 'good' : 'bad');
+    if (skill === 'intimidation') {
+      this.bumpNomadRep(-1);
+      this.log('Nomadzi nie zapominają gróźb (-1 reputacji u Nomadów).', 'bad');
+    }
+    if (r.degree === 0) {
+      if (skill === 'intimidation') {
+        st.offended = true;
+        this.log(`${th.name} odwraca się plecami. Rozmowa skończona.`, 'bad');
+      } else this.log(`${th.name} zbywa was byle czym — chyba czymś go uraziliście.`, 'bad');
+      return r;
+    }
+    if (r.degree === 1) {
+      this.log(`${th.name} wzrusza ramionami: „Nic wam nie powiem, czego sami nie zobaczycie”.`, 'dim');
+      return r;
+    }
+    if (r.degree === 3 && skill !== 'intimidation') {
+      this.bumpNomadRep(1);
+      this.log(`${th.name} nabiera do was zaufania (+1 reputacji u Nomadów).`, 'good');
+    }
+    const kinds = r.degree === 3 ? (['stash', 'foes', 'goal', 'beasts'] as const) : [def.intel];
+    const points: IntelPoint[] = [];
+    const finds: MissionFind[] = [];
+    for (const k of kinds) this.gatherIntel(k, points, finds);
+    for (const p of points) this.revealAround(p, 2);
+    if (!points.length && !finds.length) this.log(`${th.name}: „W okolicy jest spokojnie. Nic więcej nie wiem”.`, 'dim');
+    else this.log(`${th.name} opowiada, co widział${def.kind === 'nomad_trader' || def.kind === 'nomad_elder' ? '' : 'a'}: ${points.length ? points.map((p) => p.text).join('; ') : 'ukryte skrytki w okolicy'}.`, 'amber');
+    this.emit({ kind: 'intel', by: a, nomad: th, points, finds });
+    this.updateVisibility();
+    return r;
+  }
+
+  /** Wskazówki jednego rodzaju (skrzynie i skrytki, wrogowie, cel zlecenia, bestie i wędrowcy). */
+  private gatherIntel(k: 'stash' | 'foes' | 'goal' | 'beasts', points: IntelPoint[], finds: MissionFind[]): void {
+    const add = (p: GridPos, text: string): void => {
+      if (!points.some((q) => cheb(q, p) <= 1)) points.push({ gx: p.gx, gy: p.gy, text });
+    };
+    const hidden = (n: number): void => {
+      for (const f of this.finds.filter((x) => !x.found && !x.taken).slice(0, n)) {
+        f.found = true;
+        finds.push(f);
+      }
+    };
+    if (k === 'stash') {
+      for (const c of this.things.filter((x) => x.kind === 'crate' && !x.done && !this.isExplored(x))) add(c, 'skrzynia');
+      hidden(2);
+    } else if (k === 'foes' || k === 'beasts') {
+      for (const g of this.groups) {
+        const alive = g.actors.filter((e) => e.state !== 'dead');
+        if (!alive.length) continue;
+        const beast = alive.some((e) => !!e.roam || enemyDef(e.ch.templateId)?.faction === 'beast');
+        if ((k === 'beasts') !== beast) continue;
+        const lead = alive[0];
+        add(lead, k === 'beasts' ? `${lead.ch.name}${alive.length > 1 ? ` (${alive.length})` : ''}` : `wrogowie (${alive.length})`);
+      }
+      if (k === 'beasts') for (const n of this.nests.filter((x) => !x.done)) add(n, 'gniazdo');
+    } else {
+      const goal: MissionThing[] = [
+        ...[this.itemThing, this.captive, this.objDevice].filter((x): x is MissionThing => !!x && !x.done),
+        ...this.settlers.filter((x) => !x.freed), ...this.nests.filter((x) => !x.done), ...this.supplies.filter((x) => !x.done),
+      ];
+      for (const g of goal) add(g, g.name.toLowerCase());
+      if (this.target && this.target.state !== 'dead') add(this.target, `cel: ${this.target.ch.name}`);
+      hidden(3);
+    }
+  }
+
+  /** Odkrywa mgłę wokół pola (wskazówka nomada). */
+  private revealAround(p: GridPos, r: number): void {
+    for (let y = p.gy - r; y <= p.gy + r; y++)
+      for (let x = p.gx - r; x <= p.gx + r; x++) if (this.grid.inBounds(x, y)) this.explored[this.grid.index(x, y)] = 1;
+  }
+
+  /** Targowanie (raz): Dyplomacja albo Oszustwo; kryt. porażka Oszustwa obraża nomada. Zwraca test. */
+  haggleNomad(a: Actor, th: MissionThing, skill: SkillId): CheckResult | null {
+    const st = th.nomad;
+    if (!st || st.haggle !== null || st.offended || this.mode !== 'explore') return null;
+    const dc = this.nomadDC() + 2;
+    const r = skillCheck(a.ch, skill, dc, this.rng);
+    const DEG = ['KRYTYCZNA PORAŻKA', 'porażka', 'sukces', 'KRYTYCZNY SUKCES'];
+    this.log(`${a.ch.name}: ${SKILLS[skill]?.name ?? skill} ${r.total} vs KT ${dc} — ${DEG[r.degree]}`, r.degree >= 2 ? 'good' : 'bad');
+    st.haggle = HAGGLE_MULT[r.degree];
+    if (r.degree === 0 && skill === 'deception') {
+      st.offended = true;
+      this.bumpNomadRep(-1);
+      this.log(`${th.name} przejrzał kłamstwo. Koniec handlu (-1 reputacji u Nomadów).`, 'bad');
+    } else if (r.degree === 0) this.log(`${th.name} czuje się urażony — ceny idą w górę o 20%.`, 'bad');
+    else if (r.degree === 1) this.log(`${th.name} nie ustępuje ani o złom.`, 'dim');
+    else this.log(`${th.name} spuszcza z ceny o ${Math.round((1 - st.haggle) * 100)}%.`, 'good');
+    return r;
+  }
+
+  /** Cena towaru nomada. */
+  warePrice(th: MissionThing, i: number): number {
+    const w = th.nomad?.wares[i];
+    return w && th.nomad ? nomadPrice(w.id, th.nomad, this.nomadStanding) : 0;
+  }
+
+  /** Zakup u nomada za Złom (`funds` = kasa kampanii; misja dolicza swoje wydatki). Przedmiot trafia do plecaka kupującego. */
+  buyFromNomad(a: Actor, th: MissionThing, i: number, funds: number): boolean {
+    const st = th.nomad;
+    const w = st?.wares[i];
+    if (!st || !w || w.sold || st.offended || this.mode !== 'explore') return false;
+    const price = this.warePrice(th, i);
+    if (funds + this.scrap - this.nomadSpent < price) return false;
+    w.sold = true;
+    this.nomadSpent += price;
+    addToStack(a.ch.inventory, newItem(w.id));
+    this.log(`${a.ch.name} kupuje od ${th.name}: ${itemDef(w.id)?.name ?? w.id} za ${price} Złomu.`, 'amber');
+    return true;
   }
 
   // ---------- wraki pojazdów
@@ -1249,6 +1501,8 @@ export class Mission {
     if (hidden) out.push('ukryte znaleziska do odkrycia');
     const devices = this.things.filter((x) => x.kind === 'device' && !x.done && !x.lock?.jammed && !x.objective).length;
     if (devices) out.push(`urządzenia do zhakowania: ${devices}`);
+    const tents = this.things.filter((x) => x.kind === 'tent' && !x.done).length;
+    if (tents) out.push(`namioty do przeszukania: ${tents}`);
     const foes = this.enemies.filter((e) => e.state !== 'dead').length;
     if (foes) out.push(`wrogowie: ${foes}`);
     return out;
@@ -1327,6 +1581,7 @@ export class Mission {
       if (result !== 'fail') endEncounter(a.ch);
     }
     this.result = { contractId: this.contract.id, result, xp, loot: this.loot.slice(), scrap: this.scrap, casualties };
+    if (this.nomadSpent || this.nomadRep) this.result.nomads = { spent: this.nomadSpent, rep: this.nomadRep };
     if (this.objType === 'forage') this.result.supplies = { got: this.supplies.filter((x) => x.done).length, total: this.supplies.length };
     this.emit({ kind: 'finish', result: this.result });
     return this.result;

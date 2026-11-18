@@ -21,7 +21,8 @@ import { aiStep } from '../core/tactical/ai';
 import { type ActionOutcome, type Actor, type ActorState, type CombatSignal, type StrikeInfo, type TurnInfo, Combat, exploreAbilityOk, exploreItemOk } from '../core/tactical/combat';
 import { CellKind, type SearchResult, UNREACHABLE, cheb, strideActions } from '../core/tactical/grid';
 import { WRECK_TYPES, type Biome, type MapProp, type PropType, type TacticalMap } from '../core/tactical/mapgen';
-import { CRATE_SKILLS, SALVAGE_ACTIONS, type MissionContract, type MissionFind, type MissionResult, type MissionSignal, type MissionThing, Mission } from '../core/tactical/mission';
+import { ASK_SKILLS, HAGGLE_SKILLS, NOMADS } from '../core/tactical/nomads';
+import { CRATE_SKILLS, SALVAGE_ACTIONS, type MissionContract, type MissionFind, type MissionResult, type MissionSignal, type MissionThing, type IntelPoint, Mission } from '../core/tactical/mission';
 import { TurnPhase } from '../core/TurnManager';
 import { MAX_ACTION_POINTS } from '../core/TurnState';
 import {
@@ -449,6 +450,7 @@ export class WorldScene extends Phaser.Scene {
       contract = { id: seed, title: titles[type], type, level: 1, biome: this.biome, enemies: foes.length ? foes : ENEMIES, objective: { type, itemId: type === 'retrieve' ? 'radio_part' : null } };
     }
     this.mission = new Mission(contract, party, Math.random, resume?.snap);
+    this.mission.nomadStanding = this.job ? campaign.state.rep.nomads || 0 : 0;
     this.objDone = !!resume && this.mission.objectiveDone();
     this.map = this.mission.map;
     this.mission.on((s) => this.signals.push(s));
@@ -1127,6 +1129,16 @@ export class WorldScene extends Phaser.Scene {
   private createUnits(): void {
     const entry = this.map.entry.cells[5] ?? this.map.entry.cells[0];
     for (const a of this.mission.actors) {
+      if (a.side === 'neutral' && a.ch.templateId?.startsWith('nomad_')) {
+        // nomad przy ognisku (PixelLab: src/assets/units/nomad_*), zwrócony do ognia
+        const u = this.makeUnit(`nd_${a.ch.templateId}`, enemyUnitLook(a.ch.templateId), a);
+        const fire = [...this.map.deco, ...this.map.decor].filter((p) => p.type === 'campfire').sort((p, q) => cheb(p, a) - cheb(q, a))[0];
+        this.face(u, fire ? { gx: fire.gx - a.gx, gy: fire.gy - a.gy } : { gx: entry.gx - a.gx, gy: entry.gy - a.gy });
+        this.idle(u);
+        this.setUnitVisible(u, false);
+        this.units.set(a, u);
+        continue;
+      }
       if (a.side === 'neutral') {
         // jeniec (Oldgame/src/scenes/mission.js:217): cywil w łachmanach, widoczny w zasięgu wzroku lub gdy idzie za drużyną
         const u = this.makeUnit('captive', LOOK_CAPTIVE, a);
@@ -1891,7 +1903,8 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     const th = this.mission.thingAt(cell.gx, cell.gy);
-    if (th && !who && this.mission.isExplored(cell)) return this.exploreInteract(th);
+    // nomad w mgle wojny (poza zasięgiem wzroku) nie jest widoczny - klik idzie w ruch
+    if (th && !who && this.mission.isExplored(cell) && (th.kind !== 'nomad' || this.mission.isVisible(cell))) return this.exploreInteract(th);
     this.hud.setBusy(true);
     this.clearPathPreview();
     this.hud.setHover(null);
@@ -2004,6 +2017,25 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     this.face(this.units.get(sel)!, { gx: th.gx - sel.gx, gy: th.gy - sel.gy });
+    if (th.kind === 'nomad') {
+      await this.talkNomad(sel, th);
+      return this.afterExplore();
+    }
+    if (th.kind === 'tent') {
+      const owner = this.mission.tentOwner(th);
+      if (owner) {
+        const m = getStat(sel.ch, 'thievery');
+        const pct = Math.round(hitChances(m, this.mission.tentStealDC()).hit * 100);
+        const v = await this.hud.ask({
+          title: 'Namiot nomada',
+          body: `To namiot, przy którym siedzi ${owner.name}. Przeszukać go ukradkiem?\n\nZłodziejstwo ${fmtMod(m)} vs KT ${this.mission.tentStealDC()} (${pct}%). Przyłapany złodziej nic nie dostaje, a nomad przestaje z wami rozmawiać i handlować (-1 reputacji u Nomadów).`,
+          options: [{ label: 'Zostaw', value: null }, { label: 'Przeszukaj ukradkiem', value: 'go', danger: true }],
+          w: 340,
+          speakers: { left: { ch: sel.ch }, right: { ch: owner.actor!.ch, caption: owner.name } },
+        });
+        if (v !== 'go') return this.afterExplore();
+      }
+    }
     let skill: SkillId | undefined;
     if (th.kind === 'crate' || th.kind === 'door' || th.kind === 'device') {
       skill = (await this.pickThingSkill(sel, th)) ?? undefined;
@@ -2015,6 +2047,111 @@ export class WorldScene extends Phaser.Scene {
     const np = this.mission.followNeutral(sel);
     if (np && this.mission.captive?.actor) await this.walk(this.mission.captive.actor, np);
     await this.afterExplore();
+  }
+
+  /**
+   * Rozmowa z nomadem (tylko w eksploracji): powitanie, wypytanie o okolicę, targowanie, handel. Okno pokazuje
+   * portret najemnika (z lewej) i nomada (z prawej).
+   */
+  private async talkNomad(sel: Actor, th: MissionThing): Promise<void> {
+    const st = th.nomad;
+    const nomad = th.actor;
+    if (!st || !nomad) return;
+    const def = NOMADS[st.kind];
+    const nu = this.units.get(nomad);
+    if (nu) this.face(nu, { gx: sel.gx - nomad.gx, gy: sel.gy - nomad.gy });
+    const speakers = { left: { ch: sel.ch }, right: { ch: nomad.ch, caption: th.name } };
+    const title = `${th.name}, ${def.role}`;
+    if (st.offended) {
+      await this.hud.ask({ title, body: `${th.name} odwraca wzrok i milczy. Z tym nomadem nic już nie załatwicie.`, options: [{ label: 'Odejdź', value: null }], w: 340, speakers });
+      return;
+    }
+    SoundManager.sfx('radio', { vol: 0.35 });
+    let greet = `„${def.greet[st.greet % def.greet.length]}”`;
+    for (;;) {
+      if (this.over || this.mission.mode !== 'explore' || st.offended) return;
+      const opts: PromptOption[] = [{ label: 'Odejdź', value: null }];
+      if (st.wares.some((w) => !w.sold)) opts.push({ label: 'Handel', value: 'trade', primary: true });
+      if (st.haggle === null) opts.push({ label: 'Targuj się', value: 'haggle' });
+      if (!st.asked) opts.push({ label: 'Wypytaj o okolicę', value: 'ask', primary: !st.wares.some((w) => !w.sold) });
+      const body = `${greet}\n\n${def.knows}${st.asked ? ' (już wypytano)' : ''}${st.haggle !== null ? `\nCeny po targowaniu: ${st.haggle < 1 ? '-' : '+'}${Math.round(Math.abs(1 - st.haggle) * 100)}%.` : ''}`;
+      const v = await this.hud.ask({ title, body, options: opts, w: 380, speakers });
+      if (!v) return;
+      if (v === 'trade') await this.tradeNomad(sel, th, speakers);
+      else if (v === 'ask' || v === 'haggle') {
+        const list = v === 'ask' ? ASK_SKILLS : HAGGLE_SKILLS;
+        const dc = this.mission.nomadDC() + (v === 'haggle' ? 2 : 0);
+        const sk = this.skillOptions(list, (id) => dc + (id === 'intimidation' ? 2 : 0), (id) => getStat(sel.ch, id), (id) => SKILLS[id].name + (id === 'intimidation' ? ' (-1 rep.)' : ''));
+        const pick = await this.hud.ask({
+          title,
+          body: v === 'ask'
+            ? `${sel.ch.name} pyta o okolicę. Dyplomacja: uprzejma rozmowa; Zastraszanie: łatwiej nie będzie (KT +2) i Nomadzi zapamiętają groźby (-1 reputacji).`
+            : `${sel.ch.name} próbuje zbić cenę. Sukces: -15%, krytyczny: -30%; porażka: bez zmian; krytyczna porażka: +20% (przy Oszustwie nomad się obraża).`,
+          options: [{ label: 'Wróć', value: null }, ...sk],
+          w: 380,
+          speakers,
+        });
+        if (!pick) continue;
+        const r = v === 'ask' ? this.mission.askNomad(sel, th, pick as SkillId) : this.mission.haggleNomad(sel, th, pick as SkillId);
+        if (r) await this.dice(r, SKILLS[pick as SkillId].name, sel);
+        await this.flush();
+        this.updateFogOfWar();
+        this.hud.notify('stats');
+        greet = r && r.degree >= 2 ? '„Dobra, dogadamy się.”' : '„Hm.”';
+      }
+    }
+  }
+
+  /** Handel z nomadem: kup jeden z towarów za Złom (kasa Przystani + Złom z misji). */
+  private async tradeNomad(sel: Actor, th: MissionThing, speakers: { left: { ch: Character }; right: { ch: Character; caption: string } }): Promise<void> {
+    const st = th.nomad;
+    if (!st) return;
+    for (;;) {
+      if (st.offended) return;
+      const funds = (this.job ? campaign.state.scrap : 150) + this.mission.scrap - this.mission.nomadSpent;
+      const opts: PromptOption[] = [{ label: 'Wróć', value: null }];
+      const lines: string[] = [];
+      st.wares.forEach((w, i) => {
+        if (w.sold) return;
+        const price = this.mission.warePrice(th, i);
+        const name = itemDef(w.id)?.name ?? w.id;
+        const n = lines.length + 1;
+        lines.push(`${n}. ${name}: ${price} Złomu — ${itemDef(w.id)?.desc ?? ''}`);
+        if (price <= funds) opts.push({ label: `Kup ${n} (${price})`, value: String(i) });
+      });
+      if (!lines.length) return;
+      const v = await this.hud.ask({
+        title: `${th.name} — towary`,
+        body: `Masz ${funds} Złomu (kasa Przystani + złom z tej misji). Kupione rzeczy trafiają do plecaka: ${sel.ch.name}.\n\n${lines.join('\n')}`,
+        options: opts,
+        w: 420,
+        speakers,
+      });
+      if (v === null) return;
+      if (this.mission.buyFromNomad(sel, th, Number(v), this.job ? campaign.state.scrap : 150)) {
+        SoundManager.sfx('coin');
+        this.floatAbove(sel, 'Kupione', C_LOOT);
+        this.hud.notify('stats');
+        this.refreshActions();
+      }
+      await this.flush();
+    }
+  }
+
+  /** Wskazówki nomada: znaczniki z opisem nad wskazanymi miejscami i błysk odkrytych skrytek. */
+  private onIntel(points: readonly IntelPoint[], finds: readonly MissionFind[]): void {
+    for (const f of finds) this.addFindSparkle(f);
+    this.updateFogOfWar();
+    this.refreshOverlay();
+    points.forEach((p, i) => {
+      const { x, y } = tileCenter(p);
+      const t = label(this, x, y - 18, `▼ ${p.text}`, { size: 7, color: PAL.amber }).setOrigin(0.5, 1).setDepth(objDepth(p.gx, p.gy, L_FX) + 5);
+      t.setAlpha(0);
+      this.tweens.add({ targets: t, alpha: 1, delay: i * 180, duration: 300 });
+      this.tweens.add({ targets: t, y: y - 22, yoyo: true, repeat: 5, duration: 600, delay: i * 180 });
+      this.time.delayedCall(6500 + i * 180, () => this.tweens.add({ targets: t, alpha: 0, duration: 600, onComplete: () => t.destroy() }));
+    });
+    if (points.length) SoundManager.sfx('radio', { vol: 0.5 });
   }
 
   /** Wybór umiejętności do obiektu: skrzynia, drzwi (wytrych / wyważenie) albo urządzenie (hakowanie). */
@@ -2458,6 +2595,7 @@ export class WorldScene extends Phaser.Scene {
     const t = this.playerTurn;
     if (!t || !this.hud.canAct) return;
     const a = t.actor;
+    if (th.kind === 'nomad') return this.deny('W ogniu walki nie ma czasu na rozmowy.');
     if (cheb(a, th) > 1) return this.deny('Podejdź bliżej (obok obiektu).');
     if (t.actions < 1) return this.deny('Brak akcji.');
     if (th.kind === 'wreck' && t.actions < SALVAGE_ACTIONS) return this.deny(`Rozbieranie wraku zajmuje całą turę (${SALVAGE_ACTIONS} akcje).`);
@@ -2521,7 +2659,7 @@ export class WorldScene extends Phaser.Scene {
       if (cons.length) add('items', `Przedmioty (${cons.reduce((s, x) => s + x.qty, 0)})`, null, { tip: 'Użyj przedmiotu z plecaka (na siebie lub sojusznika).' });
       const th = this.mission.things.find((x) => !x.done && cheb(a, x) <= 1);
       if (th) {
-        const INTERACT: Partial<Record<MissionThing['kind'], string>> = { crate: 'Otwórz skrzynię', item: 'Zabierz cel', nest: 'Zniszcz gniazdo', door: 'Otwórz drzwi', device: 'Hakuj' };
+        const INTERACT: Partial<Record<MissionThing['kind'], string>> = { crate: 'Otwórz skrzynię', item: 'Zabierz cel', nest: 'Zniszcz gniazdo', door: 'Otwórz drzwi', device: 'Hakuj', nomad: 'Porozmawiaj', tent: 'Przeszukaj namiot' };
         add('interact', INTERACT[th.kind] ?? 'Uwolnij', null, { tip: 'Interakcja z obiektem obok.' });
       }
       this.hud.setActions(`${a.ch.name} — EKSPLORACJA`, list);
@@ -2550,9 +2688,9 @@ export class WorldScene extends Phaser.Scene {
     }
     const cons = this.combat.consumables(a);
     if (cons.length) add('items', `Przedmioty (${cons.reduce((s, x) => s + x.qty, 0)})`, null, { tip: 'Użyj przedmiotu z plecaka.' });
-    const th = this.mission.things.find((x) => !x.done && cheb(a, x) <= 1);
+    const th = this.mission.things.find((x) => !x.done && x.kind !== 'nomad' && cheb(a, x) <= 1);
     if (th) {
-      const INTERACT: Partial<Record<MissionThing['kind'], string>> = { crate: 'Otwórz skrzynię', item: 'Zabierz cel', nest: 'Zniszcz gniazdo', door: 'Otwórz drzwi', device: 'Hakuj' };
+      const INTERACT: Partial<Record<MissionThing['kind'], string>> = { crate: 'Otwórz skrzynię', item: 'Zabierz cel', nest: 'Zniszcz gniazdo', door: 'Otwórz drzwi', device: 'Hakuj', nomad: 'Porozmawiaj', tent: 'Przeszukaj namiot' };
       add('interact', INTERACT[th.kind] ?? 'Uwolnij', 1, { tip: 'Interakcja z obiektem obok (1 akcja).' });
     }
     add('delay', 'Odłóż turę', null, { tip: 'Przesuń swoją turę na koniec rundy.' });
@@ -2643,7 +2781,7 @@ export class WorldScene extends Phaser.Scene {
     }
     if (id === 'swap') return this.playerSwapWeapons();
     if (id === 'interact') {
-      const th = this.mission.things.find((x) => !x.done && cheb(a, x) <= 1);
+      const th = this.mission.things.find((x) => !x.done && x.kind !== 'nomad' && cheb(a, x) <= 1);
       return th ? this.playerInteract(th) : undefined;
     }
     if (id.startsWith('ab:')) return this.abilityPick(a, id.slice(3) as AbilityId);
@@ -2922,6 +3060,18 @@ export class WorldScene extends Phaser.Scene {
         break;
       case 'interact':
         this.onInteract(s.thing, s.by);
+        break;
+      case 'intel':
+        this.onIntel(s.points, s.finds);
+        break;
+      case 'tent':
+        if (s.caught && s.thing.camp !== undefined) {
+          SoundManager.sfx('error', { vol: 0.6 });
+          this.floatAbove(s.by, 'Przyłapany!', COLOR_HOSTILE);
+        } else if (s.scrap || s.items.length) {
+          SoundManager.sfx('pickup');
+          this.floatAbove(s.by, s.scrap ? `+${s.scrap} Złomu` : 'Łup!', C_LOOT);
+        } else this.floatAbove(s.by, 'Pusto', 0xbbbbbb);
         break;
       case 'salvage':
         await this.onSalvage(s);
@@ -3534,7 +3684,7 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     const th = this.mission.thingAt(target.gx, target.gy);
-    if (th && this.mission.isExplored(target)) {
+    if (th && this.mission.isExplored(target) && (th.kind !== 'nomad' || this.mission.isVisible(target))) {
       this.drawPath([], () => COLOR_OK);
       this.setCostLabel(null, target, 0);
       this.cursor.setTint(C_LOOT);
@@ -3544,6 +3694,8 @@ export class WorldScene extends Phaser.Scene {
         : th.kind === 'item' ? `${th.name} — kliknij, by zabrać`
         : th.kind === 'nest' ? `${th.name} — kliknij, by zniszczyć`
         : th.kind === 'wreck' ? `${th.name}${th.burnt ? ' (spalony)' : ''} — kliknij, by rozebrać na złom (Majsterkowanie, KT ${this.mission.wreckDC(th)}; hałas!)`
+        : th.kind === 'nomad' && th.nomad ? `${th.name}, ${NOMADS[th.nomad.kind].role}${th.nomad.offended ? ' — nie chce z wami rozmawiać' : t ? ' — nie czas na rozmowy' : ' — kliknij, by porozmawiać'}`
+        : th.kind === 'tent' ? (this.mission.tentOwner(th) ? 'Namiot nomada — kliknij, by przeszukać ukradkiem (Złodziejstwo)' : 'Namiot — kliknij, by przeszukać (Percepcja)')
         : `${th.name} — kliknij, by uwolnić`;
       this.hud.setHover(`${what}${t ? (th.kind === 'wreck' ? ' (obok, cała tura)' : ' (obok, 1 akcja)') : ''}`);
       return;

@@ -63,7 +63,8 @@ export interface Character {
   level: number;
   xp: number;
   isEnemy: boolean;
-  templateId?: EnemyId;
+  /** Szablon wroga (EnemyId) albo nomada spotkanego na misji (tactical/nomads.ts, np. 'nomad_trader'). */
+  templateId?: EnemyId | `nomad_${string}`;
   attrs: Attributes;
   maxHp: number;
   hp: number;
