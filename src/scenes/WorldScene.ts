@@ -35,7 +35,7 @@ import { Atmosphere, type MoodName, type WorldLight, asMood, fogMemoryTint } fro
 import { WorldFx, tracerStyleFor } from './fx/WorldFx';
 import { paintScorch } from './iso/FxArt';
 import { type CreatureLook, enemySheet, enemyUnitLook, ensureUnit, isCreatureLook, unitLookOf } from './iso/UnitLooks';
-import { spriteIdOf } from './iso/SpriteUnits';
+import { enemySpriteId, spriteIdOf } from './iso/SpriteUnits';
 import { BASE_H, BASE_W, SX0, SY0, VH, VW, ZOOM, PAL, fitViewport, goto, label } from './ui/Kit';
 import { type MissionResume, Save, enterLoaded, modalOpen, openSaveSlots } from './ui/Widgets';
 import { FRAME_CORPSE, FRAME_DOWN, LOOK_RAIDER, LOOK_SOLDIER, UNIT_FH, UNIT_FOOT_X, UNIT_FOOT_Y, UNIT_FW, type UnitLook, paintUnitSheet } from './iso/UnitArt';
@@ -468,7 +468,8 @@ export class WorldScene extends Phaser.Scene {
       sp = 1;
     }
     this.applySpeed((SPEEDS as readonly number[]).includes(sp) ? sp : 1);
-    this.hud.setObjectives(contract.title ?? 'Zlecenie', this.mission.objectives().map((l) => ({ text: l.text, done: l.done, go: l.go, dim: l.tone === 'dim' })));
+    this.hud.setObjectives(contract.title ?? 'Zlecenie', this.mission.objectives().map((l) => ({ text: l.text, done: l.done, go: l.go, dim: l.tone === 'dim', bad: l.tone === 'bad' })));
+    this.pushCivilians();
 
     this.art = new ArtBook(this);
     VIEW.r = 0;
@@ -1140,10 +1141,13 @@ export class WorldScene extends Phaser.Scene {
         continue;
       }
       if (a.side === 'neutral') {
-        // jeniec (Oldgame/src/scenes/mission.js:217): cywil w łachmanach, widoczny w zasięgu wzroku lub gdy idzie za drużyną
-        const u = this.makeUnit('captive', LOOK_CAPTIVE, a);
+        // jeniec / osadnik (Oldgame/src/scenes/mission.js:217): cywil, widoczny w zasięgu wzroku lub gdy idzie za drużyną;
+        // postać PixelLab (src/assets/units/captive_*, settler_*), w starszych zapisach bez szablonu - cywil malowany kodem
+        const tid = a.ch.templateId;
+        const u = tid && enemySpriteId(tid) ? this.makeUnit(`nd_${tid}`, enemyUnitLook(tid), a) : this.makeUnit('captive', LOOK_CAPTIVE, a);
         this.face(u, { gx: entry.gx - a.gx, gy: entry.gy - a.gy });
-        this.idle(u);
+        if (a.state === 'dead') this.lie(u);
+        else this.idle(u);
         this.setUnitVisible(u, false);
         this.units.set(a, u);
         continue;
@@ -2991,6 +2995,18 @@ export class WorldScene extends Phaser.Scene {
         if (s.result.d20) await this.dice(s.result.d20, `Atak: ${s.info.weapon.name}`, s.attacker, s.result.dmg);
         await this.animateAttack(s.attacker, s.defender, s.info.ranged ? 'shot' : 'melee', s.info.weapon.sfx, s.result);
         break;
+      case 'stray': {
+        // chybiony strzał leci dalej: podopieczny na linii strzału
+        const wu = this.units.get(s.ward);
+        if (wu) this.setUnitVisible(wu, true);
+        this.floatAbove(s.ward, 'NA LINII STRZAŁU!', COLOR_HOSTILE);
+        SoundManager.sfx('error', { vol: 0.5 });
+        await this.wait(260);
+        if (s.result.d20) await this.dice(s.result.d20, `Zabłąkany pocisk → ${s.ward.ch.name}`, s.attacker, s.result.dmg);
+        await this.animateAttack(s.attacker, s.ward, 'shot', s.result.weapon?.sfx ?? normWeapon(getWeapon(s.attacker.ch)).sfx, s.result);
+        this.pushCivilians();
+        break;
+      }
       case 'ability':
         await this.animateAbility(s.actor, s.ability, s.targets, s.cell, s.result);
         break;
@@ -3029,6 +3045,13 @@ export class WorldScene extends Phaser.Scene {
       case 'state':
         this.showState(s.actor, s.from, s.to);
         this.updateInitiative();
+        if (s.actor.side === 'neutral') {
+          this.pushCivilians();
+          if (s.to === 'dead') {
+            const lost = this.mission.captiveLost();
+            this.hud.showBanner(lost ? 'JENIEC ZGINĄŁ' : 'CYWIL ZGINĄŁ', 'bad', lost ? 'Zlecenie stracone — wycofaj się' : `${s.actor.ch.name} zginął od waszego ognia`);
+          }
+        }
         break;
       case 'spotted': {
         const u = this.units.get(s.by);
@@ -3088,7 +3111,8 @@ export class WorldScene extends Phaser.Scene {
           SoundManager.sfx('radio', { vol: 0.7 });
         }
         this.hud.contractDone = this.mission.objectiveDone() && this.mission.objType !== 'rescue';
-        this.hud.setObjectives(this.mission.contract.title ?? 'Zlecenie', s.lines.map((l) => ({ text: l.text, done: l.done, go: l.go, dim: l.tone === 'dim' })));
+        this.hud.setObjectives(this.mission.contract.title ?? 'Zlecenie', s.lines.map((l) => ({ text: l.text, done: l.done, go: l.go, dim: l.tone === 'dim', bad: l.tone === 'bad' })));
+        this.pushCivilians();
         break;
       case 'complete':
         this.completeAsk = true;
@@ -3490,6 +3514,7 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     this.hud.notify('stats');
+    this.pushCivilians();
   }
 
   /** Efekt nad postacią: leczenie (zielone krzyżyki) albo wzmocnienie (złoty krąg i szewrony). */
@@ -3651,15 +3676,18 @@ export class WorldScene extends Phaser.Scene {
       const a = ma;
       const ok = this.combat.areaCellOk(a, target, area.range);
       const hit = ok ? area.targets(target) : [];
-      for (const x of hit) this.hoverOutline.set(x, x.side === a.side ? OL.blastAlly : OL.blast);
-      const nf = hit.filter((x) => x.side !== a.side).length, na = hit.filter((x) => x.side === a.side).length;
+      for (const x of hit) this.hoverOutline.set(x, x.side === 'enemy' ? OL.blast : OL.blastAlly);
+      const nf = hit.filter((x) => x.side === 'enemy').length, na = hit.filter((x) => x.side === a.side).length;
+      const nc = hit.filter((x) => x.side === 'neutral');
       this.drawAim(target, area.r, ok);
       this.drawPath([], () => COLOR_OK);
       this.setCostLabel(null, target, 0);
       this.cursor.setTint(ok ? 0xffa028 : 0x8a8a9a);
       this.hud.setHover(
         `${area.name} (promień ${area.r}, zasięg ${area.range}) · ` +
-          (ok ? `Trafi: ${nf} ${nf === 1 ? 'wroga' : 'wrogów'}${na ? ` · UWAGA: w tym sojusznicy: ${na}!` : ''}` : 'Poza zasięgiem lub brak linii strzału.'),
+          (ok
+            ? `Trafi: ${nf} ${nf === 1 ? 'wroga' : 'wrogów'}${na ? ` · UWAGA: w tym sojusznicy: ${na}!` : ''}${nc.length ? ` · UWAGA: cywile w polu rażenia: ${nc.map((x) => x.ch.name).join(', ')}!` : ''}`
+            : 'Poza zasięgiem lub brak linii strzału.'),
       );
       return;
     }
@@ -3679,6 +3707,7 @@ export class WorldScene extends Phaser.Scene {
         const i = this.combat.strikeInfo(sel, who);
         if (i.ok || i.melee) this.hoverOutline.set(who, OL.hover);
         this.drawShotLine(sel, who, i);
+        if (i.ok && i.ranged) for (const w of this.combat.wardsOnLine(sel, who)) this.hoverOutline.set(w, OL.blastAlly);
       }
       this.hud.setHover(who.side === 'enemy' ? this.enemyHoverText(sel, who) : this.allyHoverText(who));
       return;
@@ -3776,7 +3805,7 @@ export class WorldScene extends Phaser.Scene {
     if (m?.type === 'item') {
       const inst = a.ch.inventory.find((i) => i.uid === m.uid);
       const c = inst ? this.combat.consumableOf(inst) : null;
-      if (inst && c?.target === 'area') return { r: c.radius || 1, range: c.range || 6, name: itemDef(inst.id)?.name ?? 'Wybuch', targets: (cell) => this.combat.areaTargets(cell, c.radius || 1) };
+      if (inst && c?.target === 'area') return { r: c.radius || 1, range: c.range || 6, name: itemDef(inst.id)?.name ?? 'Wybuch', targets: (cell) => this.combat.areaTargets(cell, c.radius || 1, a) };
     }
     return null;
   }
@@ -3882,13 +3911,13 @@ export class WorldScene extends Phaser.Scene {
         rg.lineStyle(1, col, 0.45).strokeEllipse(u.sprite.x, u.sprite.y, 22, 11);
       }
       // pasek PW (Oldgame/src/scenes/mission.js:167-173): wrogowie odwrotna paleta; ! = powalony, X = poległy
-      if (a.side === 'neutral' || (a.side === 'enemy' && a.state === 'dead')) {
+      if ((a.side === 'neutral' && !a.ward) || (a.side !== 'pc' && a.state === 'dead')) {
         this.barMarks.get(a)?.setVisible(false);
         continue;
       }
       const top = this.unitTop(u) + 2;
       const p = Math.max(0, Math.min(1, a.ch.maxHp > 0 ? a.ch.hp / a.ch.maxHp : 0));
-      const fill = a.side === 'pc' ? (p > 0.5 ? 0x6fd04a : p > 0.25 ? 0xf2a93b : 0xe0553f) : p > 0.5 ? 0xd9473a : p > 0.25 ? 0xe0803a : 0xf0c040;
+      const fill = a.side === 'neutral' ? 0x5ab4e0 : a.side === 'pc' ? (p > 0.5 ? 0x6fd04a : p > 0.25 ? 0xf2a93b : 0xe0553f) : p > 0.5 ? 0xd9473a : p > 0.25 ? 0xe0803a : 0xf0c040;
       const x0 = Math.round(u.sprite.x - 8), y0 = Math.round(top);
       bg.fillStyle(0x000000, 0.85).fillRect(x0 - 1, y0 - 1, 18, 4);
       bg.fillStyle(0x301010, 1).fillRect(x0, y0, 16, 2);
@@ -3983,7 +4012,19 @@ export class WorldScene extends Phaser.Scene {
     const notes = [info.frightened && 'przerażony: kość ½', info.concealed && 'cel ukryty: kość ½', info.flank && 'flankowanie', info.geoCover && 'osłona', info.mapIdx && `PWA -${info.mapIdx * 5}`, info.inc && 'dystans']
       .filter(Boolean)
       .join(', ');
-    return `${base} · KP ${info.ac} · trafienie ${pct(info.hit)} (kryt. ${pct(info.crit)})${notes ? ' · ' + notes : ''} · 1 AP${ambush}`;
+    const wards = info.ranged ? this.combat.wardsOnLine(sel, foe) : [];
+    const risk = wards.length ? ` · UWAGA: na linii strzału ${wards[0].ch.name} — pudło może trafić cywila (${pct(1 - info.hit)})` : '';
+    return `${base} · KP ${info.ac} · trafienie ${pct(info.hit)} (kryt. ${pct(info.crit)})${notes ? ' · ' + notes : ''} · 1 AP${risk}${ambush}`;
+  }
+
+  /** Portrety cywili zlecenia (jeniec, osadnicy) w panelu celów: w niewoli / podopieczny z PW / zabity. */
+  private pushCivilians(): void {
+    this.hud.setCivilians(
+      this.mission.civilians().map(({ actor, freed }) => ({
+        ch: actor.ch,
+        state: actor.state === 'dead' ? 'dead' : freed ? 'freed' : 'captive',
+      })),
+    );
   }
 
   private allyHoverText(a: Actor): string {

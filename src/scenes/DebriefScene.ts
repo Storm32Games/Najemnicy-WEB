@@ -115,6 +115,7 @@ export class DebriefScene extends Phaser.Scene {
     if (rep.length) at(0.5, () => this.reveal(line('Reputacja: ' + rep.map(([f, v]) => `${f === 'nomads' ? 'Nomadzi' : 'Ocaleni'} ${v > 0 ? '+' : ''}${v}`).join(', '), rep.some(([, v]) => v < 0) ? PAL.bad : PAL.good)));
     if (r.food) at(0.5, () => this.reveal(line(`Żywność dla Przystani: +${r.food} dn. zapasów`, PAL.good), 'pickup'));
     if (r.foodNotes.length) at(0.4, () => this.reveal(line(r.foodNotes.join(' '), PAL.bad, 6)));
+    if (r.civiliansLost.length) at(0.45, () => this.reveal(line(`Zginęli od waszego ognia: ${r.civiliansLost.join(', ')}${r.civilianFine ? ` (-${r.civilianFine} Złomu z nagrody)` : ''}`, PAL.bad, 6)));
     if (r.items.length)
       at(0.5, () => {
         this.reveal(line('Łup:', PAL.dim, 6), 'pickup');
@@ -122,7 +123,7 @@ export class DebriefScene extends Phaser.Scene {
         const stacks = new Map<string, number>();
         for (const id of r.items) stacks.set(id, (stacks.get(id) ?? 0) + 1);
         const list = [...stacks.entries()];
-        const reserve = (r.fallen.length ? 14 : 0) + (r.story ? 14 : 0) + (r.foodNotes.length ? 14 : 0);
+        const reserve = (r.fallen.length ? 14 : 0) + (r.story ? 14 : 0) + (r.foodNotes.length ? 14 : 0) + (r.civiliansLost.length ? 14 : 0);
         const room = PH - 28 - reserve - ly;
         const namedRows = Math.ceil(list.length / 2);
         if (namedRows * 13 <= room) {

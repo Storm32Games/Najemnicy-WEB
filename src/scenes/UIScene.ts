@@ -21,6 +21,7 @@ import {
   hpTone,
   stateLabel,
   statPairs,
+  type CivilianRow,
 } from '../core/HudState';
 import type { Character, EquipSlot } from '../core/rules/types';
 import { itemDef } from '../core/rules/lookup';
@@ -81,6 +82,15 @@ const LH = 9; // wysokość linii tekstu
 // geometria paneli
 /** Karta najemnika (port .m-card z Oldgame/src/mission/hud.js): duży portret, imię na dole portretu, pasek PW pod nim. */
 const PC_PT = 40;
+/** Kolor podopiecznych (uwolnionych cywili): ramka, imię, pasek PW - jak paski nad nimi na mapie. */
+const C_CIV = 0x5ab4e0;
+/** Opis karty cywila zlecenia. */
+const civilianTip = (c: CivilianRow): string =>
+  c.state === 'dead'
+    ? `${c.ch.name} · nie żyje (zginął od ognia drużyny)`
+    : c.state === 'freed'
+      ? `${c.ch.name} · podopieczny · PW ${Math.max(0, c.ch.hp)}/${c.ch.maxHp} · chybiony strzał na linii ognia albo wybuch obok może go zranić`
+      : `${c.ch.name} · w niewoli — znajdź i uwolnij`;
 const PARTY_W = PC_PT + 4;
 const PC_HPB = 9;
 const PARTY_H = 2 + PC_PT + 1 + PC_HPB + 2;
@@ -728,20 +738,20 @@ export class UIScene extends Phaser.Scene {
     const ty = (rowY: number, rowH: number): number => rowY + Math.max(0, Math.round((rowH - LH * fc) / 2));
     const small = (x: number, y: number, s: string, color: number): PixelText => this.text(x, y, s, color).setScale(fc);
     this.partyCards().forEach((it, i) => {
-      const { ch, foe, init } = it;
+      const { ch, foe, init, civ } = it;
       const y = 0;
       const card = cells[i]!;
-      const isCurrent = foe ? !!init?.current : ch === hud.active;
+      const isCurrent = civ ? false : foe ? !!init?.current : ch === hud.active;
       const turn = foe ? isCurrent : isCurrent && hud.inCombat && hud.phase !== TurnPhase.ENEMY_TURN && ch.hp > 0;
-      const st = stateLabel(ch);
-      const dead = !!ch.conditions.dead || (foe && ch.hp <= 0);
-      // ramka jak .m-card / .sel / .act / .down; wrogowie w czerwonej ramce
-      const edge = turn || isCurrent ? PAL.amber : foe ? C.red : ch.hp <= 0 ? PAL.blood : PAL.edge;
+      const st = civ ? (civ.state === 'dead' ? 'NIE ŻYJE' : civ.state === 'captive' ? 'W NIEWOLI' : null) : stateLabel(ch);
+      const dead = civ ? civ.state === 'dead' : !!ch.conditions.dead || (foe && ch.hp <= 0);
+      // ramka jak .m-card / .sel / .act / .down; wrogowie w czerwonej ramce, podopieczni (cywile) w niebieskiej
+      const edge = civ ? (civ.state === 'dead' ? PAL.blood : civ.state === 'freed' ? C_CIV : PAL.edge) : turn || isCurrent ? PAL.amber : foe ? C.red : ch.hp <= 0 ? PAL.blood : PAL.edge;
       const shadow = uiBg(this.add.rectangle(2, y + 2, PARTY_W, PARTY_H, 0x000000, 0.5).setOrigin(0), true);
       const bg = uiBg(this.add.rectangle(0, y, PARTY_W, PARTY_H, foe ? 0x1a0d0a : 0x120e0b, 1).setOrigin(0).setStrokeStyle(2, edge).setInteractive({ cursor: 'move' }));
-      const pi = hud.party.indexOf(ch);
+      const pi = civ ? -1 : hud.party.indexOf(ch);
       this.partyGrab(bg, foe || pi < 0 ? null : () => this.hud.command({ kind: 'selectMember', index: pi }));
-      bg.on('pointerover', () => this.hud.setHover(foe ? this.foeTip(ch, init) : this.memberTip(ch)));
+      bg.on('pointerover', () => this.hud.setHover(civ ? civilianTip(civ) : foe ? this.foeTip(ch, init) : this.memberTip(ch)));
       bg.on('pointerout', () => this.hud.setHover(null));
       const parts: Phaser.GameObjects.GameObject[] = [shadow, bg];
       if (turn) parts.push(this.add.rectangle(-1, y - 1, PARTY_W + 2, PARTY_H + 2).setOrigin(0).setStrokeStyle(1, PAL.amber, 0.45));
@@ -749,18 +759,19 @@ export class UIScene extends Phaser.Scene {
       // portret: tekstura w natywnej gęstości (1 teksel = 1 piksel płótna), więc jest ostry
       const px = 2, py = y + 2;
       const img = this.add.image(px, py, portraitKey(this, ch, PC_PT)).setOrigin(0);
-      if (ch.hp <= 0) img.setTint(dead ? 0x555555 : 0x8a8a8a);
+      if (dead || ch.hp <= 0) img.setTint(dead ? 0x555555 : 0x8a8a8a);
+      if (civ?.state === 'captive') img.setAlpha(0.6);
       parts.push(img, this.add.rectangle(px, py, PC_PT, PC_PT).setOrigin(0).setStrokeStyle(1, 0x000000));
 
       // imię na dole portretu (.m-nm)
       parts.push(this.add.rectangle(px, py + PC_PT - NH - 1, PC_PT, NH + 1, 0x000000, 0.72).setOrigin(0));
-      const nameCol = turn || isCurrent ? PAL.amber : foe ? C.red : parseColor(ch.nameColor, PAL.text);
+      const nameCol = civ ? C_CIV : turn || isCurrent ? PAL.amber : foe ? C.red : parseColor(ch.nameColor, PAL.text);
       parts.push(small(px + 1, ty(py + PC_PT - NH - 1, NH + 1), fitText(ch.name, Math.floor((PC_PT - 2) / fc)), nameCol));
 
       // stan (POLEGŁ / NIEPRZYT.) na środku portretu (.m-pt .st)
       if (st) {
         parts.push(this.add.rectangle(px, py + 14, PC_PT, NH + 1, 0x000000, 0.8).setOrigin(0));
-        parts.push(small(px + PC_PT / 2, ty(py + 14, NH + 1), fitText(st, Math.floor((PC_PT - 2) / fc)), PAL.bad).setOrigin(0.5, 0));
+        parts.push(small(px + PC_PT / 2, ty(py + 14, NH + 1), fitText(st, Math.floor((PC_PT - 2) / fc)), civ?.state === 'captive' ? PAL.amber : PAL.bad).setOrigin(0.5, 0));
       }
 
       // górny rząd na portrecie: pipsy akcji w turze + chipy stanów (.m-row)
@@ -792,7 +803,7 @@ export class UIScene extends Phaser.Scene {
       // pasek PW z liczbą w środku (.m-hpb)
       const hy = py + PC_PT + 1;
       g.fillStyle(0x000000, 1).fillRect(px, hy, PC_PT, PC_HPB);
-      g.fillStyle(HP_FILL[hpTone(ch)], 1).fillRect(px + 1, hy + 1, Math.round((PC_PT - 2) * Math.max(0, Math.min(1, hpRatio(ch)))), PC_HPB - 2);
+      g.fillStyle(civ ? C_CIV : HP_FILL[hpTone(ch)], 1).fillRect(px + 1, hy + 1, Math.round((PC_PT - 2) * (dead ? 0 : Math.max(0, Math.min(1, hpRatio(ch))))), PC_HPB - 2);
       g.lineStyle(1, 0x2a2018, 1).strokeRect(px + 0.5, hy + 0.5, PC_PT - 1, PC_HPB - 1);
       const hp = `${Math.max(0, ch.hp)}/${ch.maxHp}${ch.tempHp ? '+' + ch.tempHp : ''}`;
       parts.push(small(px + PC_PT / 2, ty(hy, PC_HPB), fitText(hp, Math.floor(PC_PT / fc)), 0xffffff).setOrigin(0.5, 0));
@@ -823,9 +834,11 @@ export class UIScene extends Phaser.Scene {
   }
 
   /** Karty w panelu drużyny: najemnicy, a w walce za nimi wrogowie (w kolejności inicjatywy, jeśli jest). */
-  private partyCards(): { ch: Character; foe: boolean; init: InitEntry | null }[] {
+  private partyCards(): { ch: Character; foe: boolean; init: InitEntry | null; civ?: CivilianRow }[] {
     const hud = this.hud;
-    const out: { ch: Character; foe: boolean; init: InitEntry | null }[] = hud.party.map((ch) => ({ ch, foe: false, init: hud.initiative.find((e) => e.ch === ch) ?? null }));
+    const out: { ch: Character; foe: boolean; init: InitEntry | null; civ?: CivilianRow }[] = hud.party.map((ch) => ({ ch, foe: false, init: hud.initiative.find((e) => e.ch === ch) ?? null }));
+    // cywile zlecenia (jeniec, osadnicy - portrety PixelLab): w niewoli, podopieczni z PW, zabici
+    for (const c of hud.civilians) out.push({ ch: c.ch, foe: false, init: null, civ: c });
     if (!hud.inCombat) return out;
     const fromInit = hud.initiative.filter((e) => e.side === 'enemy');
     if (fromInit.length) for (const e of fromInit) out.push({ ch: e.ch, foe: true, init: e });
@@ -1041,7 +1054,7 @@ export class UIScene extends Phaser.Scene {
     let y = LH + 3 + Math.ceil(name.height) + 2;
     for (const r of rows) {
       const box = r.go ? '►' : r.done ? '☑' : '☐';
-      const col = r.go ? PAL.toxic : r.done ? PAL.good : r.dim ? PAL.dim : PAL.text;
+      const col = r.bad ? PAL.bad : r.go ? PAL.toxic : r.done ? PAL.good : r.dim ? PAL.dim : PAL.text;
       const t = this.text(4, y, `${box} ${r.text}`, col, 7).setWordWrapWidth(W - 8);
       if (r.done && !r.go) t.setAlpha(0.75);
       items.push(t);

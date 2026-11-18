@@ -56,6 +56,14 @@ export interface ObjectiveRow {
   /** "Idź do ewakuacji" - strzałka zamiast pola wyboru. */
   go?: boolean;
   dim?: boolean;
+  /** Cel stracony (np. jeniec zginął). */
+  bad?: boolean;
+}
+
+/** Cywil zlecenia na karcie obok drużyny (portret): w niewoli, uwolniony podopieczny albo zabity. */
+export interface CivilianRow {
+  ch: Character;
+  state: 'captive' | 'freed' | 'dead';
 }
 
 /** Przycisk paska akcji (port H.abBtn). */
@@ -166,6 +174,8 @@ export class HudState {
   /** Tytuł zlecenia + cele (panel celów). */
   objectiveTitle = '';
   objectives: ObjectiveRow[] = [];
+  /** Cywile do uwolnienia / ochrony (karty z portretami obok drużyny). */
+  civilians: CivilianRow[] = [];
   /** Zlecenie zaliczone: przycisk "Odwrót" staje się "Powrotem" (wyjście z nagrodą). */
   contractDone = false;
   /** Pasek akcji walki (pusty poza turą najemnika). */
@@ -267,6 +277,15 @@ export class HudState {
     this.objectiveTitle = title;
     this.objectives = rows;
     this.notify('objectives');
+  }
+  private civSig = '';
+  /** Portrety cywili - przerysowanie tylko przy zmianie (stan, PW). */
+  setCivilians(rows: CivilianRow[]): void {
+    const sig = rows.map((r) => `${r.ch.name}:${r.state}:${r.ch.hp}`).join('|');
+    if (sig === this.civSig) return;
+    this.civSig = sig;
+    this.civilians = rows;
+    this.notify('stats');
   }
   setActions(head: string | null, list: ActionButton[]): void {
     this.actionsHead = head;
