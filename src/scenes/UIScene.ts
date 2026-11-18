@@ -1542,7 +1542,7 @@ export class UIScene extends Phaser.Scene {
         items.push(body);
         y += Math.ceil(body.height) + 4;
       }
-      return { items, w, h: y + 2 };
+      return { items, w, h: y + 22 };
     };
     // drobny druk od razu (w pełnej skali tekst dochodził do ramki / wychodził poza nią przy większej skali UI)
     const k = SMALL_TEXT;
@@ -1551,7 +1551,12 @@ export class UIScene extends Phaser.Scene {
     box.setPosition(Math.round(BASE_W / 2 - (lay.w * k) / 2), Math.max(4, Math.round(BASE_H / 2 - (lay.h * k) / 2)));
     const bg = uiBg(this.add.rectangle(0, 0, lay.w, lay.h, C.bg, 1).setOrigin(0).setStrokeStyle(1, C.amber).setInteractive());
     bg.on('pointerdown', () => this.hud.toggleHelp(false));
-    box.add([bg, ...lay.items]);
+    // nagłówek: przezroczystość okien (jak w pozostałych oknach); dół: przycisk Zamknij
+    const alpha = uiAlphaToggle(this, lay.w - 6, 4, PAL.dim, (tip) => this.hud.setHover(tip));
+    const close = kitButton(this, 0, 0, 'Zamknij', () => this.hud.toggleHelp(false), { size: 7, h: 14 });
+    const cw = (close.box.list[1] as Phaser.GameObjects.Rectangle).width;
+    close.box.setPosition(lay.w - 6 - cw, lay.h - 19);
+    box.add([bg, ...lay.items, alpha, close.box]);
     this.helpBox = box;
   }
 
