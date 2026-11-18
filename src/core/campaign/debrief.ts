@@ -70,6 +70,8 @@ export function applyMissionResult(state: CampaignState, mission: MissionResult,
     out.stolen += m.stolenScrap;
     m.stolenScrap = 0;
   }
+  // zakupy u nomadów na misji schodzą z kasy zawsze (także przy porażce)
+  if (mission.nomads?.spent) out.scrap -= mission.nomads.spent;
   state.scrap += out.scrap;
 
   // przedmioty
@@ -103,6 +105,12 @@ export function applyMissionResult(state: CampaignState, mission: MissionResult,
     const f = c?.faction ?? 'survivors';
     state.rep[f] = (state.rep[f] || 0) - 1;
     out.rep[f] = -1;
+  }
+
+  // nomadzi spotkani na misji (rozmowa, kradzież z namiotu): reputacja bez względu na wynik zlecenia
+  if (mission.nomads?.rep) {
+    state.rep.nomads = (state.rep.nomads || 0) + mission.nomads.rep;
+    out.rep.nomads = (out.rep.nomads ?? 0) + mission.nomads.rep;
   }
 
   // PD i ocaleni (powaleni wracają z 1 PW)

@@ -12,6 +12,10 @@ PROMPTS={
  'raider_psycho':'shirtless post-apocalyptic raider psycho berserker, wild eyes, painted white skull face paint, red mohawk, war paint and tattoos, spiked leather wristbands, huge rusty cleaver in hand, torn trousers, frenzied stance',
  'raider_sniper':'post-apocalyptic raider sniper, hooded tattered camouflage ghillie poncho of rags, cloth face wrap with scrap scope monocle, long bolt-action hunting rifle with makeshift scope, knife on chest strap, desert sand and olive colors',
  'raider_chief':'imposing post-apocalyptic raider warlord chief, heavy armor made of car hood plates and tire rubber, horned scrap metal helmet with skull motif, red cape of torn cloth, big battle axe, revolver in belt holster, trophy teeth necklace',
+ 'nomad_trader':'weathered post-apocalyptic desert nomad caravan trader man, sand-colored hooded cloak and long wrapped scarf, round brass goggles pushed up on forehead, friendly bearded tanned face clearly visible, huge backpack stacked with bundles, pots, canteens and trinkets, wooden walking staff, many leather satchels, rust-orange accents',
+ 'nomad_scout':'lean post-apocalyptic desert nomad scout woman, tan scarf wrapped over lower face, dark dust goggles over eyes, short hooded patched poncho, brass spyglass on belt, crossbow slung on back, wrapped forearms and shins, sand beige and rust-orange colors',
+ 'nomad_elder':'old post-apocalyptic desert nomad elder storyteller, long grey beard, deeply wrinkled tanned face clearly visible, ochre headwrap, patched layered ochre robe hung with charms, bone amulets and small bells, tall carved walking stick with feathers, slightly hunched',
+ 'nomad_hunter':'sturdy post-apocalyptic desert nomad hunter woman, fur-trimmed leather coat, sand scarf around neck, wide-brim worn hat, tanned face visible, hunting spear in hand, short bow on back, dried meat strips and small pelts hanging from belt, brown and rust-orange colors',
 }
 ROOT=os.path.join(os.path.dirname(os.path.abspath(__file__)),'..','src','assets')
 DB=os.environ.get('PL_CHARS','/tmp/pixellab_chars.json')

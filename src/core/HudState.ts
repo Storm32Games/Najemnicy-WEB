@@ -126,6 +126,13 @@ export interface Prompt {
   body: string;
   options: PromptOption[];
   w?: number;
+  /** Rozmowa: portrety rozmówców po bokach treści (lewy = najemnik, prawy = np. nomad), z podpisem. */
+  speakers?: { left?: PromptSpeaker; right?: PromptSpeaker };
+}
+/** Rozmówca w oknie pytania: postać (portret jak na kartach drużyny) i podpis pod portretem. */
+export interface PromptSpeaker {
+  ch: Pick<Character, 'id' | 'name' | 'classId' | 'ancestry' | 'look' | 'recruitId' | 'templateId'>;
+  caption?: string;
 }
 
 export interface Banner {

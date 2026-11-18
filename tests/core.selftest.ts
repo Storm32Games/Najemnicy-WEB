@@ -22,6 +22,7 @@ import {
   CITY, GATE, HOME, PLAZAS, SECTORS, WQ, buildRoute, contractSpots, heightGrid, heightQ8, inCity, regionHeightF, routePointAt, routeTicks,
 } from '../src/core/campaign/region.ts';
 import { isqrt } from '../src/core/frontend/index.ts';
+import { MAX_NOMADS } from '../src/core/tactical/nomads.ts';
 import type { AbilityDef, AbilityId, Character, ClassId, EnemyId, Contract, Biome } from '../src/core/index.ts';
 
 let fails = 0;
@@ -935,6 +936,62 @@ function simulateMission(contract: Contract, party: Character[], seed: number): 
   st.stash.push(newItem('old_watch'), newItem('dynamite'), newItem('copper_wire'));
   ok(research(st, 'time_bomb', () => 0.99).learned, 'tech: level 1 recipe after upgrade');
   ok(noFn(st), 'tech: state stays JSON-safe');
+}
+
+// ---------- nomadzi przy ogniskach i namiotach
+{
+  const party = [createCharacter({ name: 'Gadka', classId: 'scout', ancestry: 'human' })];
+  party[0].attrs.cha = 4;
+  let m: InstanceType<typeof Mission> | null = null;
+  let mc = null as unknown as ConstructorParameters<typeof Mission>[0];
+  for (let i = 0; i < 40 && !m; i++) {
+    mc = { id: `nomad-${i}`, type: 'eliminate', level: 1, biome: 'wastes', enemies: ['raider_thug', 'dog_mutant'] as EnemyId[] };
+    const t = new Mission(mc, party, makeRng(i + 1));
+    if (t.things.some((x) => x.kind === 'nomad') && t.things.some((x) => x.kind === 'tent')) m = t;
+  }
+  ok(!!m, 'nomads: wastes map has tents and sometimes a nomad by the fire');
+  if (m) {
+    const nomads = m.things.filter((x) => x.kind === 'nomad');
+    ok(nomads.length <= MAX_NOMADS && nomads.every((n) => n.actor?.side === 'neutral' && n.actor.ch.templateId?.startsWith('nomad_') && n.nomad!.wares.length > 0), 'nomads: neutral actors with wares');
+    let empties = 0;
+    for (let i = 0; i < 40; i++) {
+      const t = new Mission({ ...mc, id: `nomad-e-${i}` }, party, makeRng(500 + i));
+      const tents = t.things.filter((x) => x.kind === 'tent');
+      if (tents.some((x) => !t.tentOwner(x))) empties++;
+    }
+    ok(empties > 0, 'nomads: some camps stay empty');
+    const pc = m.pcs[0];
+    const n = nomads[0];
+    ok(!m.interact(pc, n), 'nomads: plain interact does not handle talk');
+    const r = m.askNomad(pc, n, 'diplomacy');
+    ok(!!r && n.nomad!.asked && m.askNomad(pc, n, 'diplomacy') === null, 'nomads: ask once');
+    const h = m.haggleNomad(pc, n, 'diplomacy');
+    ok(!!h && n.nomad!.haggle !== null, 'nomads: haggle sets price multiplier');
+    const before = pc.ch.inventory.length + pc.ch.inventory.reduce((s, x) => s + x.qty, 0);
+    const price = m.warePrice(n, 0);
+    ok(!m.buyFromNomad(pc, n, 0, price - 1 - m.scrap), 'nomads: cannot buy without funds');
+    if (!n.nomad!.offended) {
+      ok(m.buyFromNomad(pc, n, 0, 1000) && m.nomadSpent === price && n.nomad!.wares[0].sold, 'nomads: buy spends scrap and marks ware sold');
+      ok(pc.ch.inventory.length + pc.ch.inventory.reduce((s, x) => s + x.qty, 0) > before, 'nomads: bought item in backpack');
+    }
+    // namiot nomada: przyłapany złodziej obraża nomada
+    const own = m.things.find((x) => x.kind === 'tent' && m!.tentOwner(x));
+    if (own) {
+      pc.ch.attrs.dex = -5;
+      m.searchTent(pc, own);
+      ok(own.done, 'nomads: tent searched once');
+    }
+    const snap = JSON.parse(JSON.stringify(m.snapshot()));
+    const m2 = new Mission(mc, party, makeRng(1), snap);
+    const n2 = m2.things.find((x) => x.kind === 'nomad');
+    ok(!!n2 && n2.nomad!.asked && m2.nomadSpent === m.nomadSpent && n2.actor?.ch.templateId === n.actor!.ch.templateId, 'nomads: save/restore keeps nomad state');
+    const res = m.finish('fail');
+    const st = freshState();
+    st.party = party;
+    const s0 = st.scrap;
+    applyMissionResult(st, res, null);
+    ok(st.scrap === s0 - m.nomadSpent && (st.rep.nomads ?? 0) === m.nomadRep, 'nomads: purchases and reputation applied even on failure');
+  }
 }
 
 console.log(`\n${checks} checks, ${fails} failures`);

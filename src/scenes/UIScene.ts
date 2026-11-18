@@ -1457,8 +1457,13 @@ export class UIScene extends Phaser.Scene {
     this.shownPrompt = p.id;
     // jak Widgets.dialog, ale z uchwytem okna; Esc / klik w tło = pierwsza opcja
     const w = p.w ?? 280;
-    const probe = label(this, 0, 0, p.body, { size: 7, wrap: w - 20, lineSpacing: 2, color: PAL.text });
-    const h = Math.ceil(probe.displayHeight) + 54;
+    // rozmowa: portrety po bokach (najemnik z lewej, rozmówca - np. nomad - z prawej), treść pomiędzy
+    const PS = 40;
+    const sp = p.speakers;
+    const padL = sp?.left ? PS + 18 : 10;
+    const padR = sp?.right ? PS + 18 : 10;
+    const probe = label(this, 0, 0, p.body, { size: 7, wrap: w - padL - padR, lineSpacing: 2, color: PAL.text });
+    const h = Math.max(Math.ceil(probe.displayHeight), sp ? PS + 14 : 0) + 54;
     let answered = false;
     const reply = (v: string | null): void => {
       if (answered) return;
@@ -1470,7 +1475,17 @@ export class UIScene extends Phaser.Scene {
       reply(p.options[0]?.value ?? null);
     });
     this.promptWin = win;
-    win.add(probe.setPosition(10, 22));
+    win.add(probe.setPosition(padL, 22));
+    const speaker = (who: NonNullable<typeof sp>['left'], x: number): void => {
+      if (!who) return;
+      const key = portraitKey(this, who.ch, PS);
+      win.add(this.add.image(x, 22, key).setOrigin(0).setDisplaySize(PS, PS));
+      win.add(this.add.rectangle(x, 22, PS, PS).setOrigin(0).setStrokeStyle(1, PAL.edgeHi));
+      const cap = label(this, x + PS / 2, 25 + PS, who.caption ?? who.ch.name, { size: 6, color: PAL.amber });
+      win.add(cap.setOrigin(0.5, 0));
+    };
+    speaker(sp?.left, 9);
+    speaker(sp?.right, w - 9 - PS);
     let x = w - 8;
     for (const o of [...p.options].reverse()) {
       const btn = kitButton(this, 0, 0, o.label, () => {

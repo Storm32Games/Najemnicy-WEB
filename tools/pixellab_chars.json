@@ -42,5 +42,21 @@
  "zgrzyt_rejected": {
   "character_id": "4cc3cbdc-9ae7-459a-92c3-627bc9f87f56",
   "job": "ed00f5ef-b716-4675-a08a-ed5aca00bbed"
+ },
+ "nomad_trader": {
+  "character_id": "ef271baa-f929-4cf5-970f-e0aa107c03b8",
+  "job": "30fed509-b0c8-44b4-826e-7d226d30e7a6"
+ },
+ "nomad_scout": {
+  "character_id": "1405da7d-bb52-4e95-91e4-0b8a5bcc9664",
+  "job": "7019010b-ab30-42a1-8434-c9829bbb63ad"
+ },
+ "nomad_elder": {
+  "character_id": "928d7972-c4cc-479c-a025-d51d59b4458d",
+  "job": "8b356ff0-d9dc-4440-9437-5c8286b5b76f"
+ },
+ "nomad_hunter": {
+  "character_id": "1f6e4d2a-445a-4641-870c-db933316e2bf",
+  "job": "c4be7698-e5b4-47c0-872d-7a056d9f036a"
  }
 }
