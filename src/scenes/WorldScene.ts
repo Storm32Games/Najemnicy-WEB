@@ -557,8 +557,8 @@ export class WorldScene extends Phaser.Scene {
 
     this.scene.launch('UIScene', { hud: this.hud });
     this.refreshActions();
-    if (resume) this.hud.pushLog(`Wczytano zapis misji: ${this.job?.title ?? 'Zlecenie'}.`, 'amber');
-    else this.hud.pushLog(this.job ? `Zlecenie: ${this.job.title}. ${this.job.desc}` : `Zlecenie: ${this.mission.contract.title ?? 'oczyść teren z szabrowników'}.`, 'amber');
+    // zlecenie (tytuł i cele) widać w panelu ZLECENIE - dziennik go nie powtarza
+    if (resume) this.hud.pushLog('Wczytano zapis misji.', 'amber');
     if (!resume && this.mission.objType === 'defend') this.hud.pushLog('Zajmijcie pozycje — za chwilę nadciągnie pierwsza fala napastników.', 'bad');
     this.hud.pushLog('Klikaj pola, by się poruszać; klik na skrzynię / cel = interakcja. Wrogowie czyhają w ciemności. [H] sterowanie.');
     this.updateFoes();
