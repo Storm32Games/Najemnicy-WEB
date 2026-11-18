@@ -65,8 +65,10 @@ const C = {
   white: PAL.text,
 } as const;
 
-/** Kolory dziennika w palecie Oldgame (.m-log). */
-const TONE: Record<LogTone, number> = { dim: 0x9c958a, good: PAL.good, bad: PAL.bad, amber: PAL.amber, hd: PAL.text };
+/** Tekst dziennika: cały szary, kolorowe są tylko imiona najemników (kolor wybrany przy werbunku / w Drużynie). */
+const LOG_GREY = 0x9c958a;
+/** Kolory banera (palety Oldgame .m-log). */
+const TONE: Record<LogTone, number> = { dim: LOG_GREY, good: PAL.good, bad: PAL.bad, amber: PAL.amber, hd: PAL.text };
 /** Kolory paska PW na kartach drużyny (hpCol('pc') z Oldgame/src/mission/hud.js). */
 const HP_FILL = { good: PAL.good, amber: PAL.amber, bad: PAL.bad } as const;
 
@@ -300,6 +302,26 @@ MissionLayout.setSource(layoutSnapshot);
 MissionLayout.onReset(resetLayout);
 const LOG_HEAD = 13; // nagłówek + linia
 
+/** Przesunięcie pióra po napisie (suma szerokości znaków z odstępami). */
+const advance = (s: string): number => (s ? PixelText.measure(s + '.') - PixelText.measure('.') : 0);
+
+/** Dzieli linię dziennika na fragmenty: imiona najemników w ich kolorach, reszta szara. */
+function splitNames(text: string, names: readonly { name: string; color: number }[]): { text: string; color: number }[] {
+  const out: { text: string; color: number }[] = [];
+  let grey = '';
+  for (let i = 0; i < text.length; ) {
+    const hit = names.find((n) => text.startsWith(n.name, i) && !/[\p{L}\d]/u.test(text[i - 1] ?? '') && !/[\p{L}\d]/u.test(text[i + n.name.length] ?? ''));
+    if (hit) {
+      if (grey) out.push({ text: grey, color: LOG_GREY });
+      grey = '';
+      out.push({ text: hit.name, color: hit.color });
+      i += hit.name.length;
+    } else grey += text[i++];
+  }
+  if (grey) out.push({ text: grey, color: LOG_GREY });
+  return out;
+}
+
 interface DisplayLine {
   text: string;
   tone: LogTone;
@@ -359,7 +381,8 @@ export class UIScene extends Phaser.Scene {
   private logPanel!: Phaser.GameObjects.Container;
   private logBody!: Phaser.GameObjects.Container;
   private logBg!: Phaser.GameObjects.Rectangle;
-  private logLineTexts: PixelText[] = [];
+  /** Linie dziennika: każda to kilka fragmentów (imię w kolorze najemnika, reszta szara). */
+  private logLineTexts: PixelText[][] = [];
   private logMeasure!: PixelText;
   private logWrapCache = new Map<number, string[]>();
   private logScroll = 0; // linii od dołu
@@ -1868,11 +1891,7 @@ export class UIScene extends Phaser.Scene {
     this.logBody.removeAll(true);
     this.logBody.setScale(f);
     this.logLineTexts = [];
-    for (let i = 0; i < n; i++) {
-      const t = this.text(4 / f, i * LH, '', C.grey);
-      this.logLineTexts.push(t);
-      this.logBody.add(t);
-    }
+    for (let i = 0; i < n; i++) this.logLineTexts.push([]);
     this.logMeasure.setWordWrapWidth(Math.floor((w - 14) / f));
     this.logWrapCache.clear();
 
@@ -1949,12 +1968,24 @@ export class UIScene extends Phaser.Scene {
 
 
     const start = all.length - lines - this.logScroll;
-    this.logLineTexts.forEach((t, i) => {
+    const names = this.logNames();
+    const f = fontScaleOf('log');
+    this.logLineTexts.forEach((segs, i) => {
       const ln = all[start + i];
-      t.setVisible(!this.logCollapsed && !!ln);
-      if (!ln) return;
-      t.setText(ln.text);
-      this.recolor(t, TONE[ln.tone], ln.tone !== 'dim');
+      const parts = ln && !this.logCollapsed ? splitNames(ln.text, names) : [];
+      while (segs.length < parts.length) {
+        const t = this.text(0, i * LH, '', LOG_GREY);
+        segs.push(t);
+        this.logBody.add(t);
+      }
+      let x = 4 / f;
+      segs.forEach((t, k) => {
+        const part = parts[k];
+        t.setVisible(!!part);
+        if (!part) return;
+        t.setText(part.text).setX(x).setColor(part.color);
+        x += advance(part.text);
+      });
     });
 
     // pasek przewijania
@@ -1980,6 +2011,14 @@ export class UIScene extends Phaser.Scene {
       this.logNewBtn.setText(`▼ NAJNOWSZE${this.logUnseen ? ` (+${this.logUnseen})` : ''}`);
       this.logNewBg.setSize(this.logNewBtn.width + 6, 10);
     }
+  }
+
+  /** Imiona drużyny z kolorami (najdłuższe najpierw, żeby "Igła" nie zjadła "Igła Mała"). */
+  private logNames(): { name: string; color: number }[] {
+    return this.hud.party
+      .filter((ch) => !ch.isEnemy && ch.name)
+      .map((ch) => ({ name: ch.name, color: parseColor(ch.nameColor, PAL.text) }))
+      .sort((a, b) => b.name.length - a.name.length);
   }
 
   private scrollLog(delta: number): void {
