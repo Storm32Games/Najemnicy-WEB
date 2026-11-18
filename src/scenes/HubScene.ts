@@ -629,31 +629,31 @@ export class HubScene extends Phaser.Scene {
         this.redraw();
       });
       this.body.add([bg, portrait(this, 9, y + 3, c, 30)]);
-      this.L(24, y + 35, cut(shortName(c.name), 8), { size: 5.5, color: parseColor(c.nameColor, PAL.text) }).setOrigin(0.5, 0);
+      this.L(24, y + 35, cut(shortName(c.name), 8), { small: true, size: 5.5, color: parseColor(c.nameColor, PAL.text) }).setOrigin(0.5, 0);
     });
     if (!ch) return;
     const X0 = 48;
     // ---- nagłówek
     this.body.add(portrait(this, X0, 0, ch, 40));
-    const nm = this.L(X0 + 46, 0, cut(ch.name, 26), { size: 9, bold: true, color: parseColor(ch.nameColor, PAL.amber) });
+    const nm = this.L(X0 + 46, 0, cut(ch.name, 26), { small: true, size: 9, bold: true, color: parseColor(ch.nameColor, PAL.amber) });
     this.body.add(miniButton(this, X0 + 52 + nm.displayWidth, 0, '✎ Zmień imię', () => void this.rename(ch), { w: 56 }).box);
-    this.L(X0 + 46, 13, `${classDef(ch.classId)?.name ?? ch.classId} · ${ancestryOf(ch.ancestry).name} · poz. ${ch.level}`, { size: 6.5, color: PAL.amber });
+    this.L(X0 + 46, 13, `${classDef(ch.classId)?.name ?? ch.classId} · ${ancestryOf(ch.ancestry).name} · poz. ${ch.level}`, { small: true, size: 6.5, color: PAL.amber });
     const xpK = (ch.xp || 0) / XP_PER_LEVEL, hpK = ch.hp / Math.max(1, ch.maxHp);
-    this.L(X0 + 46, 24, 'PD', { size: 6, color: PAL.dim });
+    this.L(X0 + 46, 24, 'PD', { small: true, size: 6, color: PAL.dim });
     this.body.add(bar(this, X0 + 60, 26, 90, 4, xpK, PAL.amber, 0x3a2c10));
-    this.L(X0 + 154, 24, `${ch.xp || 0}/${XP_PER_LEVEL}`, { size: 6 });
-    this.L(X0 + 46, 33, 'PW', { size: 6, color: PAL.dim });
+    this.L(X0 + 154, 24, `${ch.xp || 0}/${XP_PER_LEVEL}`, { small: true, size: 6 });
+    this.L(X0 + 46, 33, 'PW', { small: true, size: 6, color: PAL.dim });
     this.body.add(bar(this, X0 + 60, 35, 90, 4, hpK, hpK < 0.34 ? PAL.bad : PAL.good));
-    this.L(X0 + 154, 33, `${Math.max(0, ch.hp)}/${ch.maxHp}`, { size: 6 });
+    this.L(X0 + 154, 33, `${Math.max(0, ch.hp)}/${ch.maxHp}`, { small: true, size: 6 });
 
     const Y0 = 46;
     const box = (x: number, y: number, w: number, h: number, title: string): void => {
       this.body.add(this.add.rectangle(x, y, w, h, 0x000000, 0.25).setOrigin(0).setStrokeStyle(1, PAL.edge));
-      this.L(x + 3, y + 2, title.toUpperCase(), { size: 5.5, bold: true, color: PAL.amber });
+      this.L(x + 3, y + 2, title.toUpperCase(), { small: true, size: 5.5, bold: true, color: PAL.amber });
     };
     const kv = (x: number, y: number, w: number, k: string, v: string, color: number = PAL.text, dim = false): void => {
-      this.L(x, y, k, { size: 6, color: dim ? 0x6a5f4c : PAL.dim });
-      this.L(x + w, y, v, { size: 6, bold: true, color }).setOrigin(1, 0);
+      this.L(x, y, k, { small: true, size: 6, color: dim ? 0x6a5f4c : PAL.dim });
+      this.L(x + w, y, v, { small: true, size: 6, bold: true, color }).setOrigin(1, 0);
     };
     // ---- kolumna 1: cechy + obrona
     const C1 = X0, W1 = 84;
@@ -671,9 +671,9 @@ export class HubScene extends Phaser.Scene {
     const skillIds = Object.keys(SKILLS) as SkillId[];
     new ScrollList<SkillId>(this, C2 + 3, Y0 + 11, W2 - 5, 88, 8, (id, row, w) => {
       const rank = (id as string) === 'perception' ? ch.prof.perception : ch.prof.skills[id] ?? 0;
-      const a = label(this, 0, 0, SKILLS[id].name, { size: 6, color: rank ? PAL.text : 0x6a5f4c });
-      const v = label(this, w - 1, 0, signed(getStat(ch, id)), { size: 6, bold: true, color: rank ? PAL.text : 0x6a5f4c }).setOrigin(1, 0);
-      const p = label(this, w - 16, 0.5, PROF_NAMES[rank]?.slice(0, 4) ?? '', { size: 5, color: PAL.dim }).setOrigin(1, 0);
+      const a = label(this, 0, 0, SKILLS[id].name, { small: true, size: 6, color: rank ? PAL.text : 0x6a5f4c });
+      const v = label(this, w - 1, 0, signed(getStat(ch, id)), { small: true, size: 6, bold: true, color: rank ? PAL.text : 0x6a5f4c }).setOrigin(1, 0);
+      const p = label(this, w - 16, 0.5, PROF_NAMES[rank]?.slice(0, 4) ?? '', { small: true, size: 5, color: PAL.dim }).setOrigin(1, 0);
       row.add([a, p, v]);
     }, this.body).setItems(skillIds);
     box(C2, Y0 + 103, W2, 66, 'Ekwipunek');
@@ -685,7 +685,7 @@ export class HubScene extends Phaser.Scene {
       this.body.add(hit);
       if (inst) this.body.add(itemIconImage(this, C2 + 3, y + 1, inst.id, 11));
       // jedna linia na gniazdo: nazwa przedmiotu, a w pustym gnieździe jego rodzaj (rodzaj jest też w podpowiedzi)
-      this.L(C2 + 16, y + 3, inst ? cut(itemDef(inst.id)?.name ?? inst.id, 22) : `— ${name.toLowerCase()} —`, { size: 6, color: inst ? PAL.text : PAL.dim });
+      this.L(C2 + 16, y + 3, inst ? cut(itemDef(inst.id)?.name ?? inst.id, 22) : `— ${name.toLowerCase()} —`, { small: true, size: 6, color: inst ? PAL.text : PAL.dim });
     });
     // ---- kolumna 3: zdolności, plecak, skrytka
     const C3 = C2 + W2 + 4, W3 = WW - C3 - 6;
@@ -696,7 +696,7 @@ export class HubScene extends Phaser.Scene {
       const cost = a.actions === 'reaction' ? 'reakcja' : a.actions === 0 ? 'darmowa' : `${a.actions} akc.`;
       const hit = this.add.rectangle(0, 0, w, 8, 0, 0).setOrigin(0).setInteractive();
       this.tip.attach(hit, () => `${a.name} [${cost}]${a.uses ? ` · ${ch.uses[a.id as keyof typeof ch.uses] ?? '?'} użyć` : ''}\n${a.desc}`);
-      row.add([hit, abilityIconImage(this, 0, 0, id, 7), label(this, 9, 0, cut(a.name, 13), { size: 6, color: PAL.toxic }), label(this, w - 1, 0.5, cost, { size: 5, color: PAL.dim }).setOrigin(1, 0)]);
+      row.add([hit, abilityIconImage(this, 0, 0, id, 7), label(this, 9, 0, cut(a.name, 13), { small: true, size: 6, color: PAL.toxic }), label(this, w - 1, 0.5, cost, { size: 5, color: PAL.dim }).setOrigin(1, 0)]);
     }, this.body).setItems(ch.abilities);
 
     box(C3, Y0 + 65, W3, 50, 'Plecak');
