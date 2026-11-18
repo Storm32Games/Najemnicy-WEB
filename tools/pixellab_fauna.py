@@ -37,6 +37,11 @@ SPEC={
  'turret':('custom','stationary automated sentry gun turret bolted to the ground, heavy riveted olive-grey armored base on a tripod mount '
    'with sandbags, rotating armored head with twin autocannon barrels, amber glowing sensor eye, ammo belt feed box, '
    'hazard stripes, rust and bullet dents, cables to the ground','MACHINE'),
+ # intro (plansza karawany Nomadów): konie zamiast wielbłądów - tylko obroty i chód w bok (ANIMS=walk DIRS=east)
+ 'horse_pack':('horse','sturdy wasteland pack horse of the desert nomads, dusty dun brown coat, dark mane and tail, heavily loaded with '
+   'bulging leather saddlebags, rolled blankets, water canteens and bundles tied with rope on its back, tattered sand-colored cloth over the load','ANIMAL'),
+ 'horse':('horse','lean wasteland riding horse of the desert nomads, dark bay coat with dust, black mane, worn leather saddle with '
+   'a faded rust-orange saddle blanket, small saddlebags, rope bridle, no rider','ANIMAL'),
  'fly_swarm':('custom','loose swarm of about twenty separate giant mutated flies flying in mid-air in a low wide oval cluster, '
    'each fly clearly visible with dark green-black iridescent body, translucent veined wings and glowing acid-green eyes, '
    'thin toxic green mist between them, dark shadow spot on the ground below, no person, no creature body, no tree, no trunk','SWARM'),
@@ -44,6 +49,8 @@ SPEC={
 STYLES={
  'MACHINE':(', post-apocalyptic wasteland, scavenged pre-war war machine, grim realistic proportions, AAA quality detailed pixel art, '
    'dramatic shading, muted desaturated dust-brown palette with metallic highlights, menacing, full body, no text'),
+ 'ANIMAL':(', post-apocalyptic desert wasteland, realistic proportions, AAA quality detailed pixel art, dramatic shading, '
+   'muted warm dust-brown palette, full body, side view friendly, no text'),
  'SWARM':(', post-apocalyptic wasteland mutant insects, AAA quality detailed pixel art, dramatic shading, '
    'muted desaturated palette with sickly toxic green accents, menacing, no text'),
 }
@@ -63,6 +70,8 @@ ACT_DIE={
 }
 # akcje dla id (maszyny i rój nie chodzą ani nie gryzą)
 ACT_ID={
+ 'horse_pack':{'walk':'walks forward at a calm steady pace, four legs stepping in a loop, head nodding slightly, load swaying'},
+ 'horse':{'walk':'walks forward at a calm steady pace, four legs stepping in a loop, head nodding slightly'},
  'drone':{'walk':'hovers forward, flying smoothly with spinning rotors and a slight bobbing motion',
           'bite':'aims and fires a short burst from its underslung carbine with muzzle flash and recoil, rotors spinning',
           'die':'is shot down: sparks and smoke, spins and crashes onto the ground, ends as a broken wreck lying still'},
@@ -120,7 +129,8 @@ elif cmd=='anim':
   anims=os.environ.get('ANIMS','walk,bite,die').split(',')
   def out(uid,a,d): return f'{ROOT}/{uid}/anims/{a}_{d}.png'
   jobs=db.setdefault('_jobs',{}); groups=db.setdefault('_groups',{})
-  queue=[(u,a,d) for u in ids for a in anims for d in (ALL8 if a=='walk' else FB)]
+  only=os.environ.get('DIRS','').split(',') if os.environ.get('DIRS') else None
+  queue=[(u,a,d) for u in ids for a in anims for d in (ALL8 if a=='walk' else FB) if not only or d in only]
   while True:
     while queue:
       uid,a,d=queue[0]; k=f'{uid}/{a}/{d}'

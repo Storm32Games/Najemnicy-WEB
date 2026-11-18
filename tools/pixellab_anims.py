@@ -8,7 +8,10 @@ CH={'zgrzyt':'c11c7eb6-508d-4e38-afad-d2fcc19e13f7','szept':'edd81d76-1094-4786-
 'aksamit':'8dc2cc7d-b33f-437e-960d-d878862fa6da','retorta':'5046ad43-aaab-4093-978c-901841ca4c92','mur':'76cfdb9c-d3d9-4d3c-b5af-fd2946c85e07',
 'kruk':'dc73d50b-4df9-44c3-9104-69960914a639','bizon':'5cc3213b-9b4a-4ead-a117-b19c7f6171fb','szczurek':'b572bcbc-7453-410b-a0f6-0f78d3dc8af6',
 'igla':'bd785f0d-3c25-4b02-8dff-2e90f0cecd94','sowa':'0b0a27d6-274a-49ba-a69e-3f2879d65b89','hak':'78e6a020-648e-48cb-8b3c-da7f88dba7f7',
-'plesn':'f1094a30-9592-41b6-b476-944d0425110d'}
+'plesn':'f1094a30-9592-41b6-b476-944d0425110d',
+# nomadzi (tools/pixellab_chars.py) - chód w bok do planszy karawany w intro (ANIMS=walk DIRS=east)
+'nomad_trader':'ef271baa-f929-4cf5-970f-e0aa107c03b8','nomad_scout':'1405da7d-bb52-4e95-91e4-0b8a5bcc9664',
+'nomad_elder':'928d7972-c4cc-479c-a025-d51d59b4458d','nomad_hunter':'1f6e4d2a-445a-4641-870c-db933316e2bf'}
 ALL8=['south','south-east','east','north-east','north','north-west','west','south-west']
 FB=['south-east','north-east','south-west','north-west']
 SPEC={
@@ -42,7 +45,8 @@ if sys.argv[1]=='submit':
       save(); print('submitted',uid,anim,len(todo))
 elif sys.argv[1] in ('poll','run'):
   anims=os.environ.get('ANIMS','walk,sneak,crouch,shoot,hack,pick').split(',')
-  queue=[(u,a,d) for u in sys.argv[2:] for a in anims for d in SPEC[a]['dirs']] if sys.argv[1]=='run' else []
+  only=os.environ.get('DIRS','').split(',') if os.environ.get('DIRS') else None
+  queue=[(u,a,d) for u in sys.argv[2:] for a in anims for d in SPEC[a]['dirs'] if not only or d in only] if sys.argv[1]=='run' else []
   groups={}
   while True:
     left=0

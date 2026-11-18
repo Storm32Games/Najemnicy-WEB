@@ -8,7 +8,7 @@ import {
 } from '../core/frontend';
 import { NukeBlast, paintRuinStreet } from './fx/NukeArt';
 import { addUnit, enemyUnitLook, unitLookOf } from './iso/UnitLooks';
-import { dirOfVector } from './iso/SpriteUnits';
+import { dirOfVector, spriteStripKey, spriteTexKey } from './iso/SpriteUnits';
 import {
   BASE_H, BASE_W, type Ctx2D, Motes, PAL, Typewriter, type UiButton, button, campfire, canvasTexture, enter, goto, label, panel, seeded, tiledImage,
 } from './ui/Kit';
@@ -543,7 +543,7 @@ export class IntroScene extends Phaser.Scene {
     });
   }
 
-  /** 4 - karawana nomadów na wydmach o zachodzie słońca: sylwetki pod światło, długie cienie, warstwy wydm. */
+  /** 4 - karawana nomadów z końmi na wydmach o zachodzie słońca: postacie pod światło, długie cienie, warstwy wydm. */
   private buildNomads(): void {
     const M = 30, SX = 150, SY = 128;
     this.tex('intro_nomads_sky', BASE_W + 2 * M, BASE_H, (g, w, h) => {
@@ -614,50 +614,32 @@ export class IntroScene extends Phaser.Scene {
     });
     const near = new ParallaxLayer(this, 'intro_nomads_near', 1, M, 6);
 
-    // karawana: sylwetki pod słońce z jasną obwódką od strony słońca (lewo-góra), długie cienie w prawo
+    // karawana: nomadzi i konie PixelLab (src/assets/units/nomad_*, horse*) w animacji chodu w bok (anims/walk_east),
+    // przyciemnione pod światło zachodzącego słońca, z długim cieniem w prawo
     const BASE_Y = 199;
-    const cg = this.add.graphics().setDepth(4);
-    const SIL = 0x2a140e, RIM = 0xffc070, SH = 0x5a2a16;
-    const slots: [('p' | 'b'), number, number][] = [['p', 0, 0], ['b', 30, 1], ['p', 60, 2], ['b', 96, 3], ['p', 126, 4], ['p', 146, 5], ['b', 176, 6]];
-    /** Kształt jako lista prostokątów [x, y, w, h] względem stóp. */
-    const person = (ph: number, kid: number): number[][] => {
-      const s = Math.sin(ph), l1 = Math.round(s * 2), l2 = -l1;
-      const r: number[][] = [
-        [-2, -17, 4, 4], // głowa w turbanie
-        [-3, -18, 6, 2],
-        [-3, -13, 6, 8], // tułów w szacie
-        [-4, -6, 8, 3], // poła szaty
-        [-1 + l1, -3, 2, 3], // nogi
-        [-1 + l2, -3, 2, 3],
-        [3, -16, 1, 16], // kij
-      ];
-      if (kid % 2 === 0) r.push([-6, -14, 3, 6]); // juki na plecach
-      if (kid % 3 === 1) r.push([-4, -20, 2, 3]); // lufa strzelby zza pleców
-      return r;
-    };
-    const camel = (ph: number, loaded: boolean): number[][] => {
-      const s = Math.sin(ph), c = Math.cos(ph);
-      const leg = (x: number, a: number): number[][] => [[x + Math.round(a * 2), -12, 2, 7], [x + Math.round(a * 3), -5, 2, 5]];
-      return [
-        [-12, -22, 24, 10], // tułów
-        [-10, -24, 20, 3],
-        [-6, -28, 10, 5], // garb
-        [12, -26, 4, 10], // szyja
-        [13, -32, 4, 7],
-        [15, -34, 8, 4], // łeb
-        [21, -32, 3, 2],
-        [-14, -20, 2, 7], // ogon
-        ...leg(-10, s), ...leg(-7, -s), ...leg(7, c), ...leg(10, -c),
-        ...(loaded ? [[-9, -33, 14, 6], [-11, -27, 3, 8], [6, -27, 3, 8]] : [[-5, -31, 8, 3]]),
-      ];
-    };
-    const draw = (shape: number[][], x: number, y: number, flipX = false): void => {
-      const fx = (rx: number, rw: number): number => (flipX ? x - rx - rw : x + rx);
-      // cień: spłaszczony i wydłużony w prawo (słońce nisko po lewej)
-      for (const [rx, ry, rw, rh] of shape) cg.fillStyle(SH, 0.35).fillRect(fx(rx, rw) - ry * 1.6, y - 1 + Math.round(ry * -0.08), rw + rh * 1.6, 1);
-      for (const [rx, ry, rw, rh] of shape) cg.fillStyle(RIM, 1).fillRect(fx(rx, rw) - 1, y + ry - 1, rw, rh);
-      for (const [rx, ry, rw, rh] of shape) cg.fillStyle(SIL, 1).fillRect(fx(rx, rw), y + ry, rw, rh);
-    };
+    const slots: [string, number][] = [
+      ['nomad_scout', 0], ['horse', 34], ['nomad_trader', 66], ['horse_pack', 100], ['nomad_elder', 132], ['horse_pack', 166], ['nomad_hunter', 198],
+    ];
+    const caravan = slots
+      .map(([id, off], i) => {
+        const strip = spriteStripKey(id, 'walk', 'east');
+        const still = spriteTexKey(id, 'east');
+        const anim = this.textures.exists(strip);
+        if (!anim && !this.textures.exists(still)) return null;
+        const key = anim ? strip : still;
+        const tex = this.textures.get(key);
+        const src = tex.getSourceImage() as HTMLImageElement;
+        const fs = src.height;
+        const frames = anim ? Math.max(1, Math.floor(src.width / fs)) : 1;
+        if (anim && !tex.has('w0')) for (let k = 0; k < frames; k++) tex.add(`w${k}`, 0, k * fs, 0, fs, fs);
+        const frame = (k: number): string | number => (anim ? `w${k % frames}` : 0);
+        // obraz 64 px = 32 px projektowe (gęstość 2 jak postacie na mapie misji); stopy ~ dolna krawędź klatki
+        const k0 = 0.5 * (64 / fs);
+        const shadow = this.add.image(0, 0, key, frame(0)).setOrigin(0.5, 1).setDepth(3.9).setTint(0x3a1a0e).setTintMode(Phaser.TintModes.FILL).setAlpha(0.35).setScale(k0 * 1.5, -k0 * 0.16);
+        const body = this.add.image(0, 0, key, frame(0)).setOrigin(0.5, 0.94).setDepth(4).setScale(k0).setTint(0xc89078);
+        return { off, i, body, shadow, frame, frames, horse: id.startsWith('horse') };
+      })
+      .filter((c): c is NonNullable<typeof c> => !!c);
     const dust = new Motes(this, 110, { x: 0, y: 120, w: BASE_W, h: 110 }, 0xf8d090, 16, 1, 5, 0.5);
     const heat = new Motes(this, 40, { x: 0, y: 150, w: BASE_W, h: 40 }, 0xfff0c0, 4, -2, 9, 0.25, 1);
     const critters = [
@@ -676,13 +658,13 @@ export class IntroScene extends Phaser.Scene {
       dust.update(dt);
       heat.update(dt);
       for (const c of critters) c.update(t, dt);
-      cg.clear();
       const lead = 150 + t * 8 - p * 0.6;
-      for (const [kind, off, i] of slots) {
-        const x = Math.round(lead - off), ph = t * 5.2 + i * 1.3;
-        const bob = Math.round(Math.abs(Math.sin(ph)) * 1);
-        if (kind === 'p') draw(person(ph, i), x, BASE_Y - bob);
-        else draw(camel(ph * 0.8, i !== 6), x, BASE_Y - bob);
+      for (const c of caravan) {
+        const x = Math.round(lead - c.off);
+        // 8 klatek chodu na ~1 s (koń wolniej), przesunięcie fazy, żeby karawana nie szła w jednym rytmie
+        const f = c.frame(Math.floor(t * (c.horse ? 7 : 8) + c.i * 3));
+        c.body.setFrame(f).setPosition(x, BASE_Y);
+        c.shadow.setFrame(f).setPosition(x + 14, BASE_Y + 1);
       }
     });
   }

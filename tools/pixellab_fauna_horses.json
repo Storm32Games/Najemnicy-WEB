@@ -1,0 +1,18 @@
+{
+ "horse_pack": {
+  "character_id": "36e23e59-b1de-4e70-8e96-4c683d9978d5",
+  "job": "138ceb37-db2f-4b9e-b42b-3d7778be8820"
+ },
+ "horse": {
+  "character_id": "2244ca6a-a0fc-4f5c-afb4-5e6b5b3900c5",
+  "job": "0ce52841-34dd-4877-b1f9-ab2e29b03d68"
+ },
+ "_jobs": {
+  "horse_pack/walk/east": "12169239-ea7d-4069-b1f0-a187c8f93e57",
+  "horse/walk/east": "ae2cf1e2-195f-4018-9998-372563d2bc35"
+ },
+ "_groups": {
+  "horse_pack/walk": "cafff10f-231b-4238-8f28-848dbb404942",
+  "horse/walk": "bb827098-f616-4e21-9b42-3fa26956fee6"
+ }
+}
