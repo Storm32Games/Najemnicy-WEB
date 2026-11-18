@@ -132,7 +132,7 @@ export function openPartyWindow(scene: Phaser.Scene, party: Character[], start =
       const cost = a.actions === 'reaction' ? 'reakcja' : a.actions === 0 ? 'darmowa' : `${a.actions} akc.`;
       const hit = scene.add.rectangle(0, 0, w, 8, 0, 0).setOrigin(0).setInteractive();
       tip.attach(hit, () => `${a.name} [${cost}]${a.uses ? ` · ${ch.uses[a.id as keyof typeof ch.uses] ?? '?'} użyć` : ''}\n${a.desc}`);
-      row.add([hit, abilityIconImage(scene, 0, 0, id, 7), label(scene, 9, 0, cut(a.name, 13), { small: true, size: 6, color: PAL.toxic }), label(scene, w - 1, 0.5, cost, { size: 5, color: PAL.dim }).setOrigin(1, 0)]);
+      row.add([hit, abilityIconImage(scene, 0, 0, id, 7), label(scene, 9, 0, cut(a.name, 13), { small: true, size: 6, color: PAL.toxic }), label(scene, w - 1, 0.5, cost, { small: true, size: 5, color: PAL.dim }).setOrigin(1, 0)]);
     }, B).setItems(ch.abilities);
 
     box(C3, Y0 + 65, W3, 104, 'Plecak');
