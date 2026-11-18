@@ -7,7 +7,7 @@ import { itemStatLine } from '../../core/HudState';
 import { abilityDef, ancestryOf, classDef, itemDef } from '../../core/rules/lookup';
 import { getStat } from '../../core/rules/stats';
 import type { Character, EquipSlot, ItemInstance } from '../../core/rules/types';
-import { PAL, button, cut, label, parseColor } from './Kit';
+import { PAL, button, cut, label, parseColor, uiBg } from './Kit';
 import { ScrollList, Tip, type Window, abilityIconImage, bar, itemIconImage, itemTip, openWindow, portrait } from './Widgets';
 
 // Okno "Drużyna" na mapie misji: podgląd najemników jak w zakładce Drużyna Przystani (HubScene.draw_party),
@@ -52,7 +52,7 @@ export function openPartyWindow(scene: Phaser.Scene, party: Character[], start =
     // ---- lista najemników (portrety)
     party.forEach((c, i) => {
       const y = i * 46, on = i === idx, dead = !!c.conditions.dead || c.hp <= 0;
-      const bg = scene.add.rectangle(6, y, 36, 43, on ? 0x3a2c1e : PAL.panel2, 1).setOrigin(0).setStrokeStyle(1, on ? PAL.amber : PAL.edge).setInteractive({ useHandCursor: true });
+      const bg = uiBg(scene.add.rectangle(6, y, 36, 43, on ? 0x3a2c1e : PAL.panel2, 1).setOrigin(0)).setStrokeStyle(1, on ? PAL.amber : PAL.edge).setInteractive({ useHandCursor: true });
       bg.on('pointerdown', () => {
         if (idx === i) return;
         SoundManager.sfx('click');
@@ -82,7 +82,7 @@ export function openPartyWindow(scene: Phaser.Scene, party: Character[], start =
 
     const Y0 = 46;
     const box = (x: number, y: number, w: number, h: number, title: string): void => {
-      B.add(scene.add.rectangle(x, y, w, h, 0x000000, 0.25).setOrigin(0).setStrokeStyle(1, PAL.edge));
+      B.add(uiBg(scene.add.rectangle(x, y, w, h, 0x000000, 0.25).setOrigin(0), true).setStrokeStyle(1, PAL.edge));
       L(x + 3, y + 2, title.toUpperCase(), { small: true, size: 5.5, bold: true, color: PAL.amber });
     };
     const kv = (x: number, y: number, w: number, k: string, v: string, color: number = PAL.text): void => {
@@ -116,7 +116,7 @@ export function openPartyWindow(scene: Phaser.Scene, party: Character[], start =
     box(C2, Y0 + 103, W2, 66, 'Ekwipunek');
     SLOTS.forEach(([slot, name], i) => {
       const y = Y0 + 113 + i * 14, inst = ch.equipment[slot];
-      const hit = scene.add.rectangle(C2 + 2, y, W2 - 4, 13, 0x000000, 0.3).setOrigin(0).setStrokeStyle(1, PAL.edge).setInteractive();
+      const hit = uiBg(scene.add.rectangle(C2 + 2, y, W2 - 4, 13, 0x000000, 0.3).setOrigin(0), true).setStrokeStyle(1, PAL.edge).setInteractive();
       if (inst) tip.attach(hit, () => `${name}\n${itemTip(inst.id)}`);
       B.add(hit);
       if (inst) B.add(itemIconImage(scene, C2 + 3, y + 1, inst.id, 11));
@@ -138,14 +138,14 @@ export function openPartyWindow(scene: Phaser.Scene, party: Character[], start =
     box(C3, Y0 + 65, W3, 104, 'Plecak');
     const pack = new ScrollList<ItemInstance>(scene, C3 + 2, Y0 + 75, W3 - 3, 93, 13, (inst, row, w) => {
       const def = itemDef(inst.id);
-      const hit = scene.add.rectangle(0, 0, w, 12, 0x000000, 0.25).setOrigin(0).setInteractive();
+      const hit = uiBg(scene.add.rectangle(0, 0, w, 12, 0x000000, 0.25).setOrigin(0), true).setInteractive();
       tip.attach(hit, () => itemTip(inst.id));
       let right = w;
       if (inst.qty > 1) {
         const q = label(scene, 0, 3, `×${inst.qty}`, { size: 6, small: true, color: PAL.amber });
         const qw = Math.ceil(q.displayWidth) + 4;
         right = w - qw - 1;
-        row.add([hit, scene.add.rectangle(right, 1, qw, 10, 0x000000, 0.45).setOrigin(0).setStrokeStyle(1, PAL.edge), q.setPosition(right + 2, 3)]);
+        row.add([hit, uiBg(scene.add.rectangle(right, 1, qw, 10, 0x000000, 0.45).setOrigin(0), true).setStrokeStyle(1, PAL.edge), q.setPosition(right + 2, 3)]);
         right -= 2;
       } else row.add(hit);
       const nm = label(scene, 14, 3, def?.name ?? inst.id, { size: 6, small: true, maxW: right - 14 });

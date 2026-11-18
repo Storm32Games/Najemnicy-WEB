@@ -202,9 +202,12 @@ export function uiBg<T extends Phaser.GameObjects.Rectangle>(r: T, shadow = fals
  * Przełącznik przezroczystości okien w nagłówku okna (● brak / ◐ 50/50 / ○ pełna); klik = następny poziom,
  * dotyczy wszystkich okien. (x, y) = prawy górny róg znaku. `hover` dostaje opis (null = zjechanie kursorem).
  */
+/** Opis przełącznika przyciemnienia okien (podpowiedź). */
+export const uiAlphaTip = (): string => `Przyciemnienie okien: ${UI_ALPHAS.find(([k]) => k === Settings.values.uiAlpha)?.[1] ?? ''} (klik: zmień)`;
+
 export function uiAlphaToggle(scene: Phaser.Scene, x: number, y: number, color: number = PAL.dim, hover?: (tip: string | null) => void): PixelText {
   const glyph = (): string => UI_ALPHAS.find(([k]) => k === Settings.values.uiAlpha)?.[3] ?? '●';
-  const tip = (): string => `Przezroczystość okien: ${UI_ALPHAS.find(([k]) => k === Settings.values.uiAlpha)?.[1] ?? ''} (klik: zmień)`;
+  const tip = uiAlphaTip;
   const t = label(scene, x, y, glyph(), { color }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
   t.on('pointerdown', (p: Phaser.Input.Pointer, _x: number, _y: number, ev: Phaser.Types.Input.EventData) => {
     ev?.stopPropagation();

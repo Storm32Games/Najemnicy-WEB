@@ -31,14 +31,14 @@ export const resPreset = (id: ResSetting): ResPreset => RES_PRESETS.find((p) => 
 export const UI_SIZES: readonly (readonly [number, string])[] = [[0.9, 'Mały'], [1, 'Normalny'], [1.15, 'Duży'], [1.3, 'Bardzo duży']];
 
 /**
- * Przezroczystość okien UI (tła paneli i ich cienie; napisy, ramki i przyciski zostają kryjące).
+ * Przyciemnienie okien UI = krycie teł paneli i ich cieni: 100% / 50% / 0% (napisy, ramki i przyciski zostają kryjące).
  * [id, nazwa, mnożnik krycia tła, znak przełącznika w nagłówku okna].
  */
 export type UiAlpha = 'solid' | 'half' | 'clear';
 export const UI_ALPHAS: readonly (readonly [UiAlpha, string, number, string])[] = [
-  ['solid', 'Brak', 1, '●'],
-  ['half', '50/50', 0.5, '◐'],
-  ['clear', 'Pełna', 0, '○'],
+  ['solid', '100%', 1, '●'],
+  ['half', '50%', 0.5, '◐'],
+  ['clear', '0%', 0, '○'],
 ];
 const validAlpha = (v: unknown): v is UiAlpha => UI_ALPHAS.some(([k]) => k === v);
 
@@ -103,7 +103,7 @@ export const Settings = {
   get uiAlphaK(): number {
     return UI_ALPHAS.find(([k]) => k === this.values.uiAlpha)?.[2] ?? 1;
   },
-  /** Następny poziom przezroczystości (przełącznik w nagłówku okna: brak -> 50/50 -> pełna -> brak). */
+  /** Następny poziom przyciemnienia (przełącznik w nagłówku okna: 100% -> 50% -> 0% -> 100%). */
   cycleUiAlpha(): void {
     const i = UI_ALPHAS.findIndex(([k]) => k === this.values.uiAlpha);
     this.set('uiAlpha', UI_ALPHAS[(i + 1) % UI_ALPHAS.length][0]);

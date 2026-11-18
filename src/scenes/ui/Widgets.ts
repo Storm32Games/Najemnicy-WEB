@@ -543,7 +543,7 @@ export function openOptions(scene: Phaser.Scene): Promise<void> {
     paintUi();
 
     // --- przezroczystość okien UI (to samo co przełącznik ●/◐/○ w nagłówku każdego okna)
-    head(L, 172, 'Przezroczystość okien');
+    head(L, 172, 'Przyciemnienie okien');
     const alphaMarks: [UiAlpha, UiButton][] = [];
     const paintAlpha = (): void => {
       for (const [k, b] of alphaMarks) b.setLabel((Settings.values.uiAlpha === k ? '● ' : '○ ') + (UI_ALPHAS.find(([v]) => v === k)?.[1] ?? ''));
