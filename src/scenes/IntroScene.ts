@@ -622,8 +622,10 @@ export class IntroScene extends Phaser.Scene {
     ];
     const caravan = slots
       .map(([id, off], i) => {
-        const strip = spriteStripKey(id, 'walk', 'east');
-        const still = spriteTexKey(id, 'east');
+        // profil w prawo: u ludzi obrót 'east', u koni PixelLab (szablon czworonoga) 'north-east'
+        const dir = id.startsWith('horse') ? 'north-east' : 'east';
+        const strip = spriteStripKey(id, 'walk', dir);
+        const still = spriteTexKey(id, dir);
         const anim = this.textures.exists(strip);
         if (!anim && !this.textures.exists(still)) return null;
         const key = anim ? strip : still;
@@ -633,11 +635,24 @@ export class IntroScene extends Phaser.Scene {
         const frames = anim ? Math.max(1, Math.floor(src.width / fs)) : 1;
         if (anim && !tex.has('w0')) for (let k = 0; k < frames; k++) tex.add(`w${k}`, 0, k * fs, 0, fs, fs);
         const frame = (k: number): string | number => (anim ? `w${k % frames}` : 0);
-        // obraz 64 px = 32 px projektowe (gęstość 2 jak postacie na mapie misji); stopy ~ dolna krawędź klatki
-        const k0 = 0.5 * (64 / fs);
-        const shadow = this.add.image(0, 0, key, frame(0)).setOrigin(0.5, 1).setDepth(3.9).setTint(0x3a1a0e).setTintMode(Phaser.TintModes.FILL).setAlpha(0.35).setScale(k0 * 1.5, -k0 * 0.16);
-        const body = this.add.image(0, 0, key, frame(0)).setOrigin(0.5, 0.94).setDepth(4).setScale(k0).setTint(0xc89078);
-        return { off, i, body, shadow, frame, frames, horse: id.startsWith('horse') };
+        // stopy = najniższy nieprzezroczysty wiersz paska (klatki animacji mają większe płótno niż obrót 64 px)
+        const c = document.createElement('canvas');
+        c.width = src.width;
+        c.height = fs;
+        const cx = c.getContext('2d', { willReadFrequently: true })!;
+        cx.drawImage(src, 0, 0);
+        const px = cx.getImageData(0, 0, src.width, fs).data;
+        let feet = fs - 1;
+        for (let y = fs - 1; y > 0; y--) {
+          let hit = false;
+          for (let x = 0; x < src.width && !hit; x++) hit = px[(y * src.width + x) * 4 + 3] > 0;
+          if (hit) { feet = y; break; }
+        }
+        // obraz w gęstości 2 (jak postacie na mapie misji): 64 px obrazu = 32 px projektowe
+        const oy = (feet + 1) / fs;
+        const shadow = this.add.image(0, 0, key, frame(0)).setOrigin(0.5, oy).setDepth(3.9).setTint(0x3a1a0e).setTintMode(Phaser.TintModes.FILL).setAlpha(0.35).setScale(0.75, -0.08);
+        const body = this.add.image(0, 0, key, frame(0)).setOrigin(0.5, oy).setDepth(4).setScale(0.5).setTint(0xc89078);
+        return { off, i, body, shadow, frame, horse: id.startsWith('horse') };
       })
       .filter((c): c is NonNullable<typeof c> => !!c);
     const dust = new Motes(this, 110, { x: 0, y: 120, w: BASE_W, h: 110 }, 0xf8d090, 16, 1, 5, 0.5);
@@ -658,7 +673,7 @@ export class IntroScene extends Phaser.Scene {
       dust.update(dt);
       heat.update(dt);
       for (const c of critters) c.update(t, dt);
-      const lead = 150 + t * 8 - p * 0.6;
+      const lead = 225 + t * 8 - p * 0.6;
       for (const c of caravan) {
         const x = Math.round(lead - c.off);
         // 8 klatek chodu na ~1 s (koń wolniej), przesunięcie fazy, żeby karawana nie szła w jednym rytmie

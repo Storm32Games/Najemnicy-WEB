@@ -9,7 +9,9 @@
  },
  "_jobs": {
   "horse_pack/walk/east": "12169239-ea7d-4069-b1f0-a187c8f93e57",
-  "horse/walk/east": "ae2cf1e2-195f-4018-9998-372563d2bc35"
+  "horse/walk/east": "ae2cf1e2-195f-4018-9998-372563d2bc35",
+  "horse_pack/walk/north-east": "4b78fa6b-51bf-4cc0-af36-e2dc2e260461",
+  "horse/walk/north-east": "f4c8e360-5c47-4fb5-90ec-0463e9e77493"
  },
  "_groups": {
   "horse_pack/walk": "cafff10f-231b-4238-8f28-848dbb404942",
