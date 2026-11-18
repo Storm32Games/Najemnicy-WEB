@@ -21,7 +21,7 @@ import { abilityDef, ancestryOf, classDef, conditionDef, enemyDef, itemDef } fro
 import { getStat } from '../core/rules/stats';
 import type { Character, EquipSlot, ItemInstance } from '../core/rules/types';
 import { addUnit, unitLookOf } from './iso/UnitLooks';
-import { BASE_W, Motes, PAL, button, campfire, cut, enter, goto, label, panel, parseColor } from './ui/Kit';
+import { BASE_W, Motes, PAL, button, campfire, cut, enter, goto, label, panel, parseColor, uiAlphaTip, uiAlphaToggle, uiBg } from './ui/Kit';
 import { Save, ScrollList, enterLoaded, Tip, type Tone, abilityIconImage, bar, dialog, escConsumed, itemIconImage, itemTip, miniButton, modalOpen, namePrompt, openOptions, openSaveSlots, openWindow, portrait, toast } from './ui/Widgets';
 
 // Przystań (port Oldgame/src/scenes/hub.js): tablica zleceń, handlarz, lecznica, drużyna, karczma, zapis.
@@ -97,7 +97,7 @@ export class HubScene extends Phaser.Scene {
     this.t = 0;
     this.sel = null;
     this.charIdx = 0;
-    const alias: Record<string, Tab> = { board: 'board', shop: 'shop', heal: 'heal', clinic: 'heal', party: 'party', tavern: 'tavern' };
+    const alias: Record<string, Tab> = { board: 'board', shop: 'shop', workshop: 'workshop', heal: 'heal', clinic: 'heal', party: 'party', tavern: 'tavern' };
     this.tab = this.entry.tab ?? alias[this.entry.open ?? ''] ?? 'board';
 
     this.bgT = 0;
@@ -122,13 +122,14 @@ export class HubScene extends Phaser.Scene {
     this.townFolk();
     this.dust = new Motes(this, 50, { x: 380, y: 150, w: 100, h: 120 }, 0xf0c080, 8, 1, 6, 0.4, 1);
 
+    this.tip = new Tip(this);
     this.top = this.add.container(0, 0);
     this.menu = this.add.container(388, 22);
     this.win = panel(this, WX, WY, WW, WH);
     this.title = label(this, 8, 5, '', { size: 10, bold: true, color: PAL.amber });
     this.body = this.add.container(0, BY);
-    this.win.add([this.title, this.body]);
-    this.tip = new Tip(this);
+    // przełącznik przyciemnienia okien (100% / 50% / 0%) w nagłówku, jak w oknach modalnych
+    this.win.add([this.title, this.body, this.tip.attach(uiAlphaToggle(this, WW - 6, 5), uiAlphaTip)]);
 
     this.input.keyboard?.on('keydown-ESC', (e: KeyboardEvent) => !modalOpen(this) && !escConsumed(e) && this.open('board'));
     this.redraw();
@@ -202,8 +203,9 @@ export class HubScene extends Phaser.Scene {
     this.redraw();
   }
 
+  /** Napis w oknie zakładki: drobny druk (SMALL_TEXT) jak w zakładce Drużyna; pasek górny zostaje w pełnej skali. */
   private L(x: number, y: number, s: string, o: LabelOpts = {}, parent: Phaser.GameObjects.Container = this.body): PixelText {
-    const t = label(this, x, y, s, o);
+    const t = label(this, x, y, s, parent === this.body ? { small: true, ...o } : o);
     parent.add(t);
     return t;
   }
@@ -310,18 +312,18 @@ export class HubScene extends Phaser.Scene {
    */
   private itemRow(row: Phaser.GameObjects.Container, w: number, id: string, qty: number, extra = '', compact = false): void {
     const def = itemDef(id);
-    const hit = this.add.rectangle(0, 0, w, 12, 0x000000, 0.25).setOrigin(0).setInteractive();
+    const hit = uiBg(this.add.rectangle(0, 0, w, 12, 0x000000, 0.25).setOrigin(0), true).setInteractive();
     this.tip.attach(hit, () => itemTip(id));
     row.add([hit, itemIconImage(this, 1, 1, id, 10)]);
     let right = w;
     if (qty > 1 || compact) {
-      const q = label(this, 0, 2.5, `×${qty}`, { size: 6, small: compact, color: qty > 1 ? PAL.amber : PAL.dim });
+      const q = label(this, 0, 2.5, `×${qty}`, { size: 6, small: true, color: qty > 1 ? PAL.amber : PAL.dim });
       const qw = Math.ceil(q.displayWidth) + 4;
       right = w - qw - 1;
-      row.add([this.add.rectangle(right, 1, qw, 10, 0x000000, 0.45).setOrigin(0).setStrokeStyle(1, PAL.edge), q.setPosition(right + 2, compact ? 3 : 2)]);
+      row.add([uiBg(this.add.rectangle(right, 1, qw, 10, 0x000000, 0.45).setOrigin(0), true).setStrokeStyle(1, PAL.edge), q.setPosition(right + 2, compact ? 3 : 2)]);
       right -= 2;
     }
-    const name = label(this, 14, compact ? 3 : 2, def?.name ?? id, { size: 6, small: compact, maxW: right - 14 });
+    const name = label(this, 14, compact ? 3 : 2, def?.name ?? id, { size: 6, small: true, maxW: right - 14 });
     row.add(name);
     const stat = extra.trim() ? extra : extra ? '' : itemStatLine(def, true);
     const sx = 14 + name.displayWidth + 4;
@@ -337,21 +339,21 @@ export class HubScene extends Phaser.Scene {
     const LW = 168;
     new ScrollList<Contract>(this, 6, 0, LW, 180, 30, (c, row, w) => {
       const on = c === cur, d = difficulty(c.level, lvl);
-      const bg = this.add.rectangle(0, 0, w, 27, on ? 0x3a2c1e : PAL.panel2, 1).setOrigin(0).setStrokeStyle(1, on ? PAL.edgeHi : c.story ? PAL.blood : PAL.edge).setInteractive({ useHandCursor: true });
+      const bg = uiBg(this.add.rectangle(0, 0, w, 27, on ? 0x3a2c1e : PAL.panel2, 1).setOrigin(0)).setStrokeStyle(1, on ? PAL.edgeHi : c.story ? PAL.blood : PAL.edge).setInteractive({ useHandCursor: true });
       bg.on('pointerdown', () => {
         SoundManager.sfx('click');
         this.sel = c.id;
         this.redraw();
       });
       // szerokości w pikselach czcionki 6x8: lewe napisy przycinamy, żeby nie wchodziły na prawe
-      const reward = label(this, w - 4, 1, `${c.reward.scrap} Z`, { color: PAL.amber }).setOrigin(1, 0);
-      const diff = label(this, w - 4, 18, d.label, { color: TONE[d.tone] }).setOrigin(1, 0);
+      const reward = label(this, w - 4, 1, `${c.reward.scrap} Z`, { small: true, color: PAL.amber }).setOrigin(1, 0);
+      const diff = label(this, w - 4, 18, d.label, { small: true, color: TONE[d.tone] }).setOrigin(1, 0);
       row.add([
         bg,
-        label(this, 4, 1, (c.story ? '★ ' : c.type === 'forage' && foodLow(st) ? '! ' : '') + c.title, { color: c.story ? PAL.amber : c.type === 'forage' && foodLow(st) ? PAL.bad : PAL.text, maxW: w - 12 - reward.width }),
+        label(this, 4, 1, (c.story ? '★ ' : c.type === 'forage' && foodLow(st) ? '! ' : '') + c.title, { small: true, color: c.story ? PAL.amber : c.type === 'forage' && foodLow(st) ? PAL.bad : PAL.text, maxW: w - 12 - reward.width }),
         reward,
-        label(this, 4, 10, `${c.giver} · ${FACTION_NAMES[c.faction]}`, { color: PAL.dim, maxW: w - 8 }),
-        label(this, 4, 18, `${TYPE_NAMES[c.type]} · poz. ${c.level} · ${BIOME_NAMES[c.biome]}`, { color: PAL.toxic, maxW: w - 12 - diff.width }),
+        label(this, 4, 10, `${c.giver} · ${FACTION_NAMES[c.faction]}`, { small: true, color: PAL.dim, maxW: w - 8 }),
+        label(this, 4, 18, `${TYPE_NAMES[c.type]} · poz. ${c.level} · ${BIOME_NAMES[c.biome]}`, { small: true, color: PAL.toxic, maxW: w - 12 - diff.width }),
         diff,
       ]);
     }, this.body).setItems(st.contracts);
@@ -359,7 +361,7 @@ export class HubScene extends Phaser.Scene {
     this.L(6, 186, storyHint(st), { size: 5.5, color: PAL.dim, wrap: LW });
 
     const DX = LW + 14, DW = WW - DX - 8;
-    this.body.add(this.add.rectangle(DX - 4, 0, DW + 8, BH - 2, 0x000000, 0.25).setOrigin(0).setStrokeStyle(1, PAL.edge));
+    this.body.add(uiBg(this.add.rectangle(DX - 4, 0, DW + 8, BH - 2, 0x000000, 0.25).setOrigin(0), true).setStrokeStyle(1, PAL.edge));
     if (!cur) {
       this.L(DX, 6, 'Wybierz zlecenie z listy.', { size: 7, color: PAL.dim });
       return;
@@ -470,7 +472,7 @@ export class HubScene extends Phaser.Scene {
     const LW = 150;
     new ScrollList<RecipeDef>(this, 6, 0, LW, 196, 24, (r, row, w) => {
       const on = r === cur, v = vis(r), locked = r.level > t.level;
-      const bg = this.add.rectangle(0, 0, w, 22, on ? 0x3a2c1e : PAL.panel2, 1).setOrigin(0).setStrokeStyle(1, on ? PAL.edgeHi : PAL.edge).setInteractive({ useHandCursor: true });
+      const bg = uiBg(this.add.rectangle(0, 0, w, 22, on ? 0x3a2c1e : PAL.panel2, 1).setOrigin(0)).setStrokeStyle(1, on ? PAL.edgeHi : PAL.edge).setInteractive({ useHandCursor: true });
       bg.on('pointerdown', () => {
         SoundManager.sfx('click');
         this.selRecipe = r.id;
@@ -479,10 +481,10 @@ export class HubScene extends Phaser.Scene {
       row.add(bg);
       if (v !== 'unknown') row.add(itemIconImage(this, 3, 6, r.out.id, 10));
       const name = v === 'unknown' ? '???' : (itemDef(r.out.id)?.name ?? r.out.id) + (r.out.qty > 1 ? ` ×${r.out.qty}` : '');
-      row.add(label(this, 16, 3, cut(name, 22), { size: 6, bold: true, color: v === 'known' ? PAL.good : v === 'hinted' ? PAL.text : PAL.dim }));
+      row.add(label(this, 16, 3, cut(name, 22), { small: true, size: 6, bold: true, color: v === 'known' ? PAL.good : v === 'hinted' ? PAL.text : PAL.dim }));
       const sub = locked ? `Wymaga: ${WORKSHOP_LEVELS[r.level].name}` : BRANCH_NAMES[r.branch];
-      row.add(label(this, 16, 12, cut(sub, 30), { size: 5, color: locked ? PAL.bad : PAL.dim }));
-      if (v === 'known') row.add(label(this, w - 4, 3, 'SCHEMAT', { size: 5, bold: true, color: PAL.good }).setOrigin(1, 0));
+      row.add(label(this, 16, 12, cut(sub, 30), { small: true, size: 5, color: locked ? PAL.bad : PAL.dim }));
+      if (v === 'known') row.add(label(this, w - 4, 3, 'SCHEMAT', { small: true, size: 5, bold: true, color: PAL.good }).setOrigin(1, 0));
     }, this.body).setItems(list);
 
     // ---- szczegóły receptury
@@ -547,7 +549,7 @@ export class HubScene extends Phaser.Scene {
 
     // ---- poziom warsztatu
     const by = BH - 58;
-    this.body.add(this.add.rectangle(RX, by, RW, 52, PAL.panel2, 1).setOrigin(0).setStrokeStyle(1, PAL.edge));
+    this.body.add(uiBg(this.add.rectangle(RX, by, RW, 52, PAL.panel2, 1).setOrigin(0)).setStrokeStyle(1, PAL.edge));
     this.L(RX + 4, by + 3, `${WORKSHOP_LEVELS[t.level].name.toUpperCase()} (poz. ${t.level})`, { size: 6, bold: true, color: PAL.amber });
     this.L(RX + RW - 4, by + 3, `Schematy: ${t.known.length}`, { size: 5.5, color: PAL.dim }).setOrigin(1, 0);
     const nx = nextLevel(st);
@@ -577,7 +579,7 @@ export class HubScene extends Phaser.Scene {
       const y = 20 + i * 40, dead = !!c.conditions.dead, k = healCost(c);
       const conds = Object.keys(c.conditions).map((id) => conditionDef(id)?.name ?? id);
       const hp = c.hp / Math.max(1, c.maxHp);
-      this.body.add(this.add.rectangle(6, y, 230, 36, PAL.panel2, 1).setOrigin(0).setStrokeStyle(1, PAL.edge));
+      this.body.add(uiBg(this.add.rectangle(6, y, 230, 36, PAL.panel2, 1).setOrigin(0)).setStrokeStyle(1, PAL.edge));
       this.body.add(portrait(this, 9, y + 3, c, 30));
       this.L(44, y + 3, cut(c.name, 26), { size: 7, bold: true, color: parseColor(c.nameColor, PAL.text) });
       this.L(44, y + 13, cut(`${classDef(c.classId)?.name ?? c.classId} poz. ${c.level}${conds.length ? ' · ' + conds.join(', ') : ''}`, 42), { size: 5.5, color: PAL.dim });
@@ -603,7 +605,7 @@ export class HubScene extends Phaser.Scene {
       SoundManager.sfx('heal');
       this.redraw();
     }, { w: 122, h: 18, size: 7, primary: true, enabled: total > 0 }).box);
-    this.body.add(this.add.rectangle(SX, 46, 122, 86, PAL.panel2, 1).setOrigin(0).setStrokeStyle(1, PAL.edge));
+    this.body.add(uiBg(this.add.rectangle(SX, 46, 122, 86, PAL.panel2, 1).setOrigin(0)).setStrokeStyle(1, PAL.edge));
     this.L(SX + 5, 50, 'ODPOCZYNEK', { size: 7, bold: true, color: PAL.amber });
     this.L(SX + 5, 62, 'Prześpij noc w kwaterze: pełne PW i zdolności, ale mija dzień — tablica zleceń się zmienia.', { size: 6, wrap: 112, lineSpacing: 2 });
     this.body.add(button(this, SX + 5, 110, 'Odpocznij (następny dzień)', () => {
@@ -622,7 +624,7 @@ export class HubScene extends Phaser.Scene {
     const ch = st.party[this.charIdx];
     st.party.forEach((c, i) => {
       const y = i * 46, on = i === this.charIdx;
-      const bg = this.add.rectangle(6, y, 36, 43, on ? 0x3a2c1e : PAL.panel2, 1).setOrigin(0).setStrokeStyle(1, on ? PAL.amber : PAL.edge).setInteractive({ useHandCursor: true });
+      const bg = uiBg(this.add.rectangle(6, y, 36, 43, on ? 0x3a2c1e : PAL.panel2, 1).setOrigin(0)).setStrokeStyle(1, on ? PAL.amber : PAL.edge).setInteractive({ useHandCursor: true });
       bg.on('pointerdown', () => {
         SoundManager.sfx('click');
         this.charIdx = i;
@@ -648,7 +650,7 @@ export class HubScene extends Phaser.Scene {
 
     const Y0 = 46;
     const box = (x: number, y: number, w: number, h: number, title: string): void => {
-      this.body.add(this.add.rectangle(x, y, w, h, 0x000000, 0.25).setOrigin(0).setStrokeStyle(1, PAL.edge));
+      this.body.add(uiBg(this.add.rectangle(x, y, w, h, 0x000000, 0.25).setOrigin(0), true).setStrokeStyle(1, PAL.edge));
       this.L(x + 3, y + 2, title.toUpperCase(), { small: true, size: 5.5, bold: true, color: PAL.amber });
     };
     const kv = (x: number, y: number, w: number, k: string, v: string, color: number = PAL.text, dim = false): void => {
@@ -679,7 +681,7 @@ export class HubScene extends Phaser.Scene {
     box(C2, Y0 + 103, W2, 66, 'Ekwipunek');
     SLOTS.forEach(([slot, name], i) => {
       const y = Y0 + 113 + i * 14, inst = ch.equipment[slot];
-      const hit = this.add.rectangle(C2 + 2, y, W2 - 4, 13, 0x000000, 0.3).setOrigin(0).setStrokeStyle(1, PAL.edge).setInteractive({ useHandCursor: true });
+      const hit = uiBg(this.add.rectangle(C2 + 2, y, W2 - 4, 13, 0x000000, 0.3).setOrigin(0), true).setStrokeStyle(1, PAL.edge).setInteractive({ useHandCursor: true });
       hit.on('pointerdown', () => this.pickEquip(ch, slot, name));
       if (inst) this.tip.attach(hit, () => `${name}\n${itemTip(inst.id)}`);
       this.body.add(hit);
@@ -696,7 +698,7 @@ export class HubScene extends Phaser.Scene {
       const cost = a.actions === 'reaction' ? 'reakcja' : a.actions === 0 ? 'darmowa' : `${a.actions} akc.`;
       const hit = this.add.rectangle(0, 0, w, 8, 0, 0).setOrigin(0).setInteractive();
       this.tip.attach(hit, () => `${a.name} [${cost}]${a.uses ? ` · ${ch.uses[a.id as keyof typeof ch.uses] ?? '?'} użyć` : ''}\n${a.desc}`);
-      row.add([hit, abilityIconImage(this, 0, 0, id, 7), label(this, 9, 0, cut(a.name, 13), { small: true, size: 6, color: PAL.toxic }), label(this, w - 1, 0.5, cost, { size: 5, color: PAL.dim }).setOrigin(1, 0)]);
+      row.add([hit, abilityIconImage(this, 0, 0, id, 7), label(this, 9, 0, cut(a.name, 13), { small: true, size: 6, color: PAL.toxic }), label(this, w - 1, 0.5, cost, { small: true, size: 5, color: PAL.dim }).setOrigin(1, 0)]);
     }, this.body).setItems(ch.abilities);
 
     box(C3, Y0 + 65, W3, 50, 'Plecak');
@@ -787,11 +789,11 @@ export class HubScene extends Phaser.Scene {
     if (fallen.length) this.L(6, 9, cut('Polegli: ' + fallen.join(', '), 90), { size: 6, color: PAL.bad });
     const list = new ScrollList<RecruitDef>(this, 6, 20, WW - 12, 192, 38, (r, row, w) => {
       const ch = recruitCharacter(r, r.name, lvl);
-      row.add(this.add.rectangle(0, 0, w, 35, PAL.panel2, 1).setOrigin(0).setStrokeStyle(1, PAL.edge));
+      row.add(uiBg(this.add.rectangle(0, 0, w, 35, PAL.panel2, 1).setOrigin(0)).setStrokeStyle(1, PAL.edge));
       row.add(portrait(this, 3, 3, ch, 29));
-      row.add(label(this, 37, 2, r.name, { size: 7, bold: true }));
-      row.add(label(this, 37, 11, `${classDef(r.classId)?.name ?? r.classId} · ${ancestryOf(ch.ancestry).name} · poz. ${lvl} · PW ${ch.maxHp} · KP ${getStat(ch, 'ac')}`, { size: 5.5, color: PAL.amber }));
-      row.add(label(this, 37, 19, cut(r.bio, 132), { size: 5.5, italic: true, color: PAL.dim, wrap: w - 130, lineSpacing: 1 }));
+      row.add(label(this, 37, 2, r.name, { small: true, size: 7, bold: true }));
+      row.add(label(this, 37, 11, `${classDef(r.classId)?.name ?? r.classId} · ${ancestryOf(ch.ancestry).name} · poz. ${lvl} · PW ${ch.maxHp} · KP ${getStat(ch, 'ac')}`, { small: true, size: 5.5, color: PAL.amber }));
+      row.add(label(this, 37, 19, cut(r.bio, 132), { small: true, size: 5.5, italic: true, color: PAL.dim, wrap: w - 130, lineSpacing: 1 }));
       row.add(button(this, w - 84, 10, `Zatrudnij (${cost} Z)`, () => {
         const res = hireRecruit(st, r);
         if (!res.ok) {
