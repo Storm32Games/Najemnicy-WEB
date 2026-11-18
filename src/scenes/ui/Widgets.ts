@@ -9,7 +9,7 @@ import { itemStatLine } from '../../core/HudState';
 import { abilityDef, itemDef } from '../../core/rules/lookup';
 import { abilityIcon, abilityKind, itemIcon } from '../legacy/icons';
 import { portraitCanvas } from '../legacy/portraits';
-import { hasSpritePortrait, spriteIdOf, spritePortraitCanvas } from '../iso/SpriteUnits';
+import { enemySpriteId, hasSpritePortrait, spriteIdOf, spritePortraitCanvas } from '../iso/SpriteUnits';
 import { addHiRes } from '../iso/HiRes';
 import { ART, BASE_H, BASE_W, CANVAS_H, CANVAS_W, PAL, RES, type UiButton, UI_TITLE, ZOOM, applyResolution, button, goto, canApplyZoomLive, hex, label, panel, parseColor, uiAlphaToggle } from './Kit';
 import { RES_PRESETS, type ResSetting, Settings, UI_ALPHAS, UI_SIZES, type UiAlpha, resPreset } from './Settings';
@@ -211,6 +211,8 @@ export function openSaveSlots(scene: Phaser.Scene, mode: 'save' | 'load'): Promi
 interface PortraitSource {
   id?: string;
   recruitId?: string;
+  /** Szablon wroga (EnemyId): szabrownicy mają portret PixelLab w src/assets/portraits/<templateId>.png. */
+  templateId?: string;
   name?: string;
   classId?: string;
   ancestry?: string;
@@ -230,8 +232,9 @@ const hashStr = (s: string): string => {
  * (applyResolution) powstaje nowa tekstura w nowej gęstości.
  */
 export function portraitKey(scene: Phaser.Scene, ch: PortraitSource, size = 32): string {
-  // najemnik z gotowym portretem (iso/SpriteUnits: popiersie PixelLab 64x64), powiększany najbliższym sąsiadem
-  const sprite = spriteIdOf(ch);
+  // najemnik albo wróg (szablon, np. raider_thug) z gotowym portretem (iso/SpriteUnits: popiersie PixelLab 64x64),
+  // powiększany najbliższym sąsiadem - zgodny z postacią na mapie zamiast starego portretu malowanego kodem
+  const sprite = spriteIdOf(ch) ?? enemySpriteId(ch.templateId);
   if (hasSpritePortrait(scene, sprite)) {
     const key = `porpl_${sprite}_${size}@${ART}`;
     if (!scene.textures.exists(key)) addHiRes(scene, key, spritePortraitCanvas(scene, sprite), { w: size, h: size, smooth: false });
