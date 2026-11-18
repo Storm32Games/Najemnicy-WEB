@@ -251,6 +251,8 @@ export interface ButtonOptions {
   primary?: boolean;
   danger?: boolean;
   enabled?: boolean;
+  /** Drobny druk (SMALL_TEXT) - małe przyciski w listach (ceny, Użyj), zgodne z napisami wierszy. */
+  small?: boolean;
   /** Wołane przy najechaniu myszą (np. przeniesienie fokusu menu). */
   onOver?: () => void;
 }
@@ -258,10 +260,11 @@ export interface ButtonOptions {
 /** Przycisk w stylu starego .btn. (x, y) = lewy górny róg. */
 export function button(scene: Phaser.Scene, x: number, y: number, text: string, onClick: () => void, o: ButtonOptions = {}): UiButton {
   const size = o.size ?? 8;
-  const t = label(scene, 0, 0, text.toUpperCase(), { size, bold: true }).setOrigin(0.5);
+  const k = o.small ? SMALL_TEXT : 1;
+  const t = label(scene, 0, 0, text.toUpperCase(), { size, bold: true, small: o.small }).setOrigin(0.5);
   const w = o.w ?? Math.ceil(t.displayWidth) + 14;
-  // napis zawsze mieści się w przycisku (czcionka bitmapowa nie zmniejsza się)
-  t.setMaxLineWidth(w - 6);
+  // napis zawsze mieści się w przycisku (czcionka bitmapowa nie zmniejsza się); szerokość w pikselach czcionki
+  t.setMaxLineWidth((w - (o.small ? 4 : 6)) / k);
   const h = o.h ?? size + 8;
   const base = o.primary ? PAL.amber : o.danger ? PAL.bad : PAL.text;
   const edge = o.primary ? PAL.amber : o.danger ? PAL.blood : PAL.edge;

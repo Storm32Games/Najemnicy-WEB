@@ -418,8 +418,8 @@ export class HubScene extends Phaser.Scene {
     this.L(6, 0, `TOWARY (rabat ${Math.round(nomadDiscount(st) * 100)}%)`, { size: 6, bold: true, color: PAL.amber });
     new ScrollList<string>(this, 6, 10, CW, 196, 14, (id, row, w) => {
       const price = buyPrice(id, st);
-      this.itemRow(row, w - 40, id, 1);
-      row.add(miniButton(this, w - 38, 1, `${price} Z`, () => {
+      this.itemRow(row, w - 34, id, 1);
+      row.add(miniButton(this, w - 32, 1, `${price} Z`, () => {
         const r = buy(st, id);
         if (!r.ok) {
           SoundManager.sfx('error');
@@ -427,7 +427,7 @@ export class HubScene extends Phaser.Scene {
         }
         SoundManager.sfx('buy');
         this.redraw();
-      }, { w: 38, enabled: st.scrap >= price }).box);
+      }, { w: 32, enabled: st.scrap >= price }).box);
     }, this.body).setItems(shopStock(st, lvl));
 
     this.body.add(this.add.rectangle(CW + 11, 0, 1, BH - 4, PAL.edge).setOrigin(0));
@@ -438,10 +438,10 @@ export class HubScene extends Phaser.Scene {
     const list = new ScrollList<(typeof mine)[number]>(this, RX, 10, CW - 6, 196, 14, ({ inst, src, arr }, row, w) => {
       const price = sellPrice(inst.id, st);
       const uses = partUses(inst.id);
-      this.itemRow(row, w - (uses.length ? 60 : 44), inst.id, inst.qty, src);
+      this.itemRow(row, w - (uses.length ? 52 : 36), inst.id, inst.qty, src);
       if (uses.length) {
         // część do warsztatu: zamiast sprzedaży trafia do magazynu części (receptury: core/data/recipes.ts)
-        const wb = miniButton(this, w - 58, 1, 'W', () => {
+        const wb = miniButton(this, w - 50, 1, 'W', () => {
           if (!storePart(st, inst, arr)) return;
           SoundManager.sfx('pickup');
           toast(this, `${itemDef(inst.id)?.name ?? inst.id}: do warsztatu.`);
@@ -450,11 +450,11 @@ export class HubScene extends Phaser.Scene {
         this.tip.attach(wb.box.list[1] as Phaser.GameObjects.Rectangle, () => `Do warsztatu (nie sprzedawaj).\nPrzyda się w ${uses.length} ${uses.length === 1 ? 'recepturze' : 'recepturach'}: ${uses.map((r) => (recipeState(st, r.id) === 'unknown' ? '???' : itemDef(r.out.id)?.name ?? r.id)).join(', ')}.`);
         row.add(wb.box);
       }
-      row.add(miniButton(this, w - 42, 1, price ? `+${price} Z` : '—', () => {
+      row.add(miniButton(this, w - 34, 1, price ? `+${price} Z` : '—', () => {
         if (!sell(st, inst, arr)) return;
         SoundManager.sfx('coin');
         this.redraw();
-      }, { w: 42, enabled: price > 0 }).box);
+      }, { w: 34, enabled: price > 0 }).box);
     }, this.body);
     list.empty = 'Nic do sprzedania.';
     list.setItems(mine);
@@ -705,15 +705,15 @@ export class HubScene extends Phaser.Scene {
     const pack = new ScrollList<ItemInstance>(this, C3 + 2, Y0 + 75, W3 - 3, 39, 13, (inst, row, w) => {
       const def = itemDef(inst.id);
       const usable = def?.type === 'consumable' && def.consumable.effect === 'heal';
-      this.itemRow(row, w - (usable ? 44 : 14), inst.id, inst.qty, ' ', true);
+      this.itemRow(row, w - (usable ? 38 : 14), inst.id, inst.qty, ' ', true);
       if (usable)
-        row.add(miniButton(this, w - 43, 1, 'Użyj', () => {
+        row.add(miniButton(this, w - 37, 1, 'Użyj', () => {
           const before = ch.hp;
           useConsumable(ch, inst, [ch]);
           SoundManager.sfx('heal');
           toast(this, `${shortName(ch.name)}: +${ch.hp - before} PW`, 'good');
           this.redraw();
-        }, { w: 29 }).box);
+        }, { w: 23 }).box);
       row.add(miniButton(this, w - 13, 1, '→', () => {
         moveItem(inst, ch.inventory, st.stash);
         this.redraw();

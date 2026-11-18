@@ -795,7 +795,7 @@ export class ScrollList<T> {
 
 /** Mały przycisk do wierszy list. */
 export function miniButton(scene: Phaser.Scene, x: number, y: number, text: string, onClick: () => void, o: { w?: number; enabled?: boolean; primary?: boolean } = {}): UiButton {
-  return button(scene, x, y, text, onClick, { size: 6, h: 11, w: o.w, enabled: o.enabled, primary: o.primary });
+  return button(scene, x, y, text, onClick, { size: 6, h: 11, w: o.w, enabled: o.enabled, primary: o.primary, small: true });
 }
 
 /** Pasek postępu (PW / PD). */
